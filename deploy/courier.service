@@ -1,0 +1,15 @@
+[Unit]
+Description=Courier Push API
+After=docker.service
+Requires=docker.service
+
+[Service]
+Restart=always
+WorkingDirectory=/opt/courier
+ExecStartPre=-/usr/bin/docker rm -f courier-api
+ExecStartPre=/bin/chown -R 10001:10001 /opt/courier/data
+ExecStart=/usr/bin/docker run --name courier-api --env-file /opt/courier/.env -p 127.0.0.1:8000:8000 -v /opt/courier/data:/data courier-api:latest
+ExecStop=/usr/bin/docker stop courier-api
+
+[Install]
+WantedBy=multi-user.target
