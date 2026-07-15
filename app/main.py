@@ -204,6 +204,36 @@ async def request_logging_middleware(request: Request, call_next):
     return response
 
 
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def ember_home_landing() -> HTMLResponse:
+    return HTMLResponse(
+        (
+            "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            "<meta name=\"description\" content=\"Ember makes architectural lighting simple to set up, control, and recover.\">"
+            "<title>Ember — Light belongs at home</title><style>"
+            ":root{color-scheme:light;--ink:#17201d;--paper:#f5f2ea;--ember:#e7562e;--moss:#275c4b}"
+            "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
+            "padding:32px;color:var(--ink);background:radial-gradient(circle at 80% 5%,#eedfb9 0,transparent 32%),"
+            "linear-gradient(#275c4b09 1px,transparent 1px),linear-gradient(90deg,#275c4b09 1px,transparent 1px),var(--paper);"
+            "background-size:auto,32px 32px,32px 32px;font:16px/1.6 system-ui,-apple-system,sans-serif}"
+            "main{width:min(720px,100%)}.brand{color:var(--ember);font-size:13px;font-weight:800;letter-spacing:.16em}"
+            "h1{max-width:680px;margin:28px 0 20px;font:650 clamp(48px,10vw,88px)/.92 Georgia,serif;letter-spacing:-.055em}"
+            "p{max-width:560px;color:#64706b;font-size:18px}.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}"
+            "a{display:inline-block;padding:14px 18px;color:white;background:var(--ember);font-weight:750;text-decoration:none}"
+            "a.secondary{color:var(--moss);background:transparent;border:1px solid #aebbb5}"
+            "footer{margin-top:72px;color:var(--moss);font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}"
+            "</style></head><body><main><div class=\"brand\">EMBER</div>"
+            "<h1>Light belongs at home.</h1><p>Set up, control, and recover compatible architectural lighting "
+            "without accounts or guesswork.</p><div class=\"actions\">"
+            "<a href=\"https://flash.emberhome.lighting\">Open board flasher</a>"
+            "<a class=\"secondary\" href=\"/docs\">API documentation</a></div>"
+            "<footer>Recover gracefully. Fail softly.</footer></main></body></html>"
+        ),
+        headers={"Cache-Control": "public, max-age=300"},
+    )
+
+
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok"}

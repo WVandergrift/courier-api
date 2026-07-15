@@ -43,11 +43,15 @@ def test_ember_home_key_association_files_and_landing_page(tmp_path, monkeypatch
         "AA:BB:CC",
     )
     with TestClient(app) as client:
+        home = client.get("/")
         apple = client.get("/.well-known/apple-app-site-association")
         android = client.get("/.well-known/assetlinks.json")
         landing = client.get("/ember/t/tag_01J2NFCEMBERCORE")
         invalid = client.get("/ember/t/short")
 
+    assert home.status_code == 200
+    assert "Light belongs at home." in home.text
+    assert "https://flash.emberhome.lighting" in home.text
     assert apple.status_code == 200
     assert apple.headers["content-type"].startswith("application/json")
     assert apple.json()["applinks"]["details"][0] == {

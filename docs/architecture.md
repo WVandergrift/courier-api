@@ -51,7 +51,8 @@ mounted at `/data/courier.db` inside the container.
 - Challenges expire after two minutes and are single-use.
 - Device tokens are logged only as a hash, suffix, and length.
 - Home Key secrets live in the URI fragment and are never included in the HTTP
-  request to `courier.systems`.
+  request to `emberhome.lighting` (or the supported legacy `courier.systems`
+  origin).
 
 ## Runtime
 

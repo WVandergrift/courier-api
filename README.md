@@ -43,7 +43,7 @@ Useful local URLs:
 | Delivery events | `GET /v1/events`, `/dashboard` | Inspect redacted provider results |
 | Companion relay | `/v1/relay/*` | Route authenticated off-LAN request/response frames |
 | Home Key links | `/ember/t/{tagId}` | Open Ember without exposing the URI fragment secret |
-| Platform association | `/.well-known/*` | Associate `courier.systems` with the Ember apps |
+| Platform association | `/.well-known/*` | Associate `emberhome.lighting` with the Ember apps |
 
 Every protected administrative endpoint accepts
 `Authorization: Bearer $COURIER_API_TOKEN`. The dashboard also accepts HTTP
@@ -88,6 +88,7 @@ signature rules, database behavior, and relay registration/routing policy.
 
 ## Production
 
-Production is served at [courier.systems](https://courier.systems). The Docker,
-systemd, nginx, persistence, redeployment, and TLS procedures are documented in
-[DEPLOYMENT.md](DEPLOYMENT.md).
+Production is served at [emberhome.lighting](https://emberhome.lighting).
+`courier.systems` remains a compatibility origin for existing clients and Home
+Keys. The Docker, systemd, nginx, persistence, redeployment, and TLS procedures
+are documented in [DEPLOYMENT.md](DEPLOYMENT.md).

@@ -9,7 +9,7 @@
   changed public routes before declaring it complete.
 - Keep production secrets and persistent data on the host. Never commit them or
   copy them into public release roots.
-- Assets promoted through `firmware.courier.systems` are immutable by version.
+- Assets promoted through `firmware.emberhome.lighting` are immutable by version.
   Do not replace an existing release with different bytes; publish a higher
   semantic version instead.
 - A release that publishes Courier-hosted assets is complete only after the

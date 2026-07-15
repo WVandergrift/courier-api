@@ -1,7 +1,10 @@
 # Public Ember update origin
 
-Courier hosts public release artifacts at `https://firmware.courier.systems`
+Courier hosts public release artifacts at `https://firmware.emberhome.lighting`
 while Ember source and build records remain private on GitHub.
+
+The legacy `https://firmware.courier.systems` origin remains online for released
+firmware and manifests that already contain its immutable URLs.
 
 ## Paths
 

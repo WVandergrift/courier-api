@@ -8,8 +8,8 @@
 - IPv4: `157.245.126.211`
 - App directory: `/opt/courier`
 - Systemd service: `courier.service`
-- Public health check: `https://courier.systems/health` (HTTP on the bare IP now
-  301s/404s — certbot redirects `courier.systems`→HTTPS and returns 404 for the
+- Public health check: `https://emberhome.lighting/health` (HTTP on the bare IP now
+  301s/404s — nginx redirects recognized Ember hosts to HTTPS and returns 404 for the
   IP host; use the HTTPS URL)
 
 The generated production API token is stored locally in `.env.production` and remotely in `/opt/courier/.env`.
@@ -70,7 +70,7 @@ Logs are JSON. Useful event names:
 
 `deploy/nginx.conf` is the **full** config including the `:443` server block, so
 the redeploy above preserves HTTPS (it used to revert to HTTP-only, which broke
-the daemon's `https://courier.systems/...` pushes with `fetch failed`). The TLS
+the daemon's `https://emberhome.lighting/...` pushes with `fetch failed`). The TLS
 cert lives at `/etc/letsencrypt/live/courier.systems/`; renewals only swap the
 cert files at those paths and don't touch the nginx block, so they don't
 conflict with a redeploy.
@@ -81,7 +81,10 @@ in `DNS.md` propagate), which also (re)writes the nginx block:
 
 ```bash
 ssh root@$COURIER_HOST
-certbot --nginx --cert-name courier.systems -d courier.systems -d www.courier.systems -d firmware.courier.systems --redirect --non-interactive --agree-tos -m will.vandergrift@outlook.com
+certbot --nginx --cert-name courier.systems \
+  -d emberhome.lighting -d www.emberhome.lighting -d firmware.emberhome.lighting \
+  -d courier.systems -d www.courier.systems -d firmware.courier.systems \
+  --redirect --non-interactive --agree-tos -m will.vandergrift@outlook.com
 systemctl reload nginx
 ```
 
@@ -90,7 +93,7 @@ to restore the `:443` block (it reuses the existing cert, no re-issue).
 
 ## Public release assets
 
-`firmware.courier.systems` serves immutable, versioned Ember artifacts from
+`firmware.emberhome.lighting` serves immutable, versioned Ember artifacts from
 `/var/www/courier-firmware`. It is deliberately separate from the Courier API
 and exposes only files explicitly promoted by the release workflow. Manifests
 are no-cache; versioned firmware and desktop assets are cached as immutable.
@@ -98,6 +101,10 @@ The public allow-list also exposes the versioned hardware-profile catalog,
 schema, and sanitized WebP reference photos. Public release responses include
 wildcard CORS because they contain no credentials or private data and must be
 readable by the browser-based Ember board flasher.
+
+The legacy `courier.systems` API and firmware names remain on the certificate
+and nginx server blocks for installed apps, controllers, NFC stickers, and
+published manifests that already contain those origins.
 
 Create the least-privileged publisher account once and install the public half
 of the dedicated GitHub Actions deploy key:
