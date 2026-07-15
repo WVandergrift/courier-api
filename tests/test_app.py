@@ -51,7 +51,12 @@ def test_ember_home_key_association_files_and_landing_page(tmp_path, monkeypatch
 
     assert home.status_code == 200
     assert "Light belongs at home." in home.text
+    assert "Set up and control compatible architectural lighting" in home.text
+    assert "Set up, control, and recover" not in home.text
     assert "Simple for consumers. Open for developers." in home.text
+    assert "house-lights" in home.text
+    assert "prefers-reduced-motion" in home.text
+    assert "Recover gracefully. Fail softly." not in home.text
     assert "https://flash.emberhome.lighting" in home.text
     assert apple.status_code == 200
     assert apple.headers["content-type"].startswith("application/json")

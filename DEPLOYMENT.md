@@ -86,20 +86,30 @@ cert files at those paths and don't touch the nginx block, so they don't
 conflict with a redeploy.
 
 **Bootstrap only** — on a fresh host the cert doesn't exist yet, so `nginx -t`
-would fail on the `ssl_certificate` lines. Issue it once (after the DNS records
-in `DNS.md` propagate), which also (re)writes the nginx block:
+would fail on the `ssl_certificate` lines. Issue it once after the DNS records
+in `DNS.md` propagate; `certonly` leaves the repository-owned nginx blocks intact:
 
 ```bash
 ssh root@$COURIER_HOST
-certbot --nginx --cert-name courier.systems \
-  -d emberhome.lighting -d www.emberhome.lighting -d firmware.emberhome.lighting \
-  -d courier.systems -d www.courier.systems -d firmware.courier.systems \
-  --redirect --non-interactive --agree-tos -m will.vandergrift@outlook.com
+certbot certonly --nginx --cert-name courier.systems --expand \
+  -d emberhome.lighting -d www.emberhome.lighting -d firmware.emberhome.lighting -d flash.emberhome.lighting \
+  -d courier.systems -d www.courier.systems -d firmware.courier.systems -d flash.courier.systems \
+  --non-interactive --agree-tos -m will.vandergrift@outlook.com
 systemctl reload nginx
 ```
 
-If HTTPS ever regresses to HTTP-only after a deploy, re-run that certbot command
-to restore the `:443` block (it reuses the existing cert, no re-issue).
+The nginx configuration owns the `:443` blocks. Re-run the `certbot certonly`
+command only when the certificate's hostname set changes; routine renewals reuse
+the same on-disk certificate path.
+
+## Browser flasher
+
+`flash.emberhome.lighting` is served directly by nginx from
+`/var/www/ember-flasher`. Its source and deployment helper live in the
+`flasher/` directory of the private `ember-core` repository. The flasher deploy
+atomically replaces that directory and verifies the page, board catalog, and an
+immutable firmware download. Courier deployments preserve the files because
+they live outside `/opt/courier`.
 
 ## Public release assets
 
