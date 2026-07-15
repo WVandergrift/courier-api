@@ -58,8 +58,18 @@ ssh "$target" '
   systemctl is-active --quiet courier.service
 '
 
-curl --fail --silent --show-error \
-  --retry 12 --retry-delay 2 --retry-all-errors \
-  "$health_url" >/dev/null
+healthy=false
+for _ in {1..12}; do
+  if curl --fail --silent "$health_url" >/dev/null 2>&1; then
+    healthy=true
+    break
+  fi
+  sleep 2
+done
+if [[ "$healthy" != true ]]; then
+  echo "Courier restarted, but its public health check did not recover." >&2
+  curl --fail --silent --show-error "$health_url" >/dev/null
+  exit 1
+fi
 
 printf 'Courier deployed from %s and healthy at %s\n' "$(git rev-parse --short HEAD)" "$health_url"
