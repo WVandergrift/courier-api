@@ -210,8 +210,8 @@ async def ember_home_landing() -> HTMLResponse:
         (
             "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
             "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            "<meta name=\"description\" content=\"Ember makes architectural lighting simple to set up, control, and recover.\">"
-            "<title>Ember — Light belongs at home</title><style>"
+            "<meta name=\"description\" content=\"Ember is simple for consumers and open for developers.\">"
+            "<title>Ember — Simple for consumers. Open for developers.</title><style>"
             ":root{color-scheme:light;--ink:#17201d;--paper:#f5f2ea;--ember:#e7562e;--moss:#275c4b}"
             "*{box-sizing:border-box}body{margin:0;min-height:100vh;display:grid;place-items:center;"
             "padding:32px;color:var(--ink);background:radial-gradient(circle at 80% 5%,#eedfb9 0,transparent 32%),"
@@ -222,13 +222,15 @@ async def ember_home_landing() -> HTMLResponse:
             "p{max-width:560px;color:#64706b;font-size:18px}.actions{display:flex;flex-wrap:wrap;gap:12px;margin-top:34px}"
             "a{display:inline-block;padding:14px 18px;color:white;background:var(--ember);font-weight:750;text-decoration:none}"
             "a.secondary{color:var(--moss);background:transparent;border:1px solid #aebbb5}"
-            "footer{margin-top:72px;color:var(--moss);font-size:11px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}"
+            "footer{display:flex;flex-wrap:wrap;gap:10px 24px;margin-top:72px;color:var(--moss);font-size:11px;"
+            "font-weight:800;letter-spacing:.1em;text-transform:uppercase}footer span{color:#7b8782}"
             "</style></head><body><main><div class=\"brand\">EMBER</div>"
             "<h1>Light belongs at home.</h1><p>Set up, control, and recover compatible architectural lighting "
             "without accounts or guesswork.</p><div class=\"actions\">"
             "<a href=\"https://flash.emberhome.lighting\">Open board flasher</a>"
             "<a class=\"secondary\" href=\"/docs\">API documentation</a></div>"
-            "<footer>Recover gracefully. Fail softly.</footer></main></body></html>"
+            "<footer><strong>Simple for consumers. Open for developers.</strong>"
+            "<span>Recover gracefully. Fail softly.</span></footer></main></body></html>"
         ),
         headers={"Cache-Control": "public, max-age=300"},
     )

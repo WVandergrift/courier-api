@@ -1,5 +1,7 @@
 # Courier API
 
+> **Simple for consumers. Open for developers.**
+
 Courier is the coordination service for Ember installations. It provides:
 
 - controller identity bootstrap and passwordless installation enrollment;
