@@ -55,6 +55,7 @@ def test_ember_home_key_association_files_and_landing_page(tmp_path, monkeypatch
     assert "Set up, control, and recover" not in home.text
     assert "Simple for consumers. Open for developers." in home.text
     assert "house-lights" in home.text
+    assert home.text.count('class="strip ') == 5
     assert "prefers-reduced-motion" in home.text
     assert "Recover gracefully. Fail softly." not in home.text
     assert "https://flash.emberhome.lighting" in home.text
