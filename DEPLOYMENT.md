@@ -94,6 +94,10 @@ to restore the `:443` block (it reuses the existing cert, no re-issue).
 `/var/www/courier-firmware`. It is deliberately separate from the Courier API
 and exposes only files explicitly promoted by the release workflow. Manifests
 are no-cache; versioned firmware and desktop assets are cached as immutable.
+The public allow-list also exposes the versioned hardware-profile catalog,
+schema, and sanitized WebP reference photos. Public release responses include
+wildcard CORS because they contain no credentials or private data and must be
+readable by the browser-based Ember board flasher.
 
 Create the least-privileged publisher account once and install the public half
 of the dedicated GitHub Actions deploy key:
