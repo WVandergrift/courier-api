@@ -16,8 +16,19 @@ The generated production API token is stored locally in `.env.production` and re
 
 ## Redeploy
 
-From the repository root, set the production host and deploy the tracked
-source. Local environments, databases, caches, and credentials are excluded:
+From a clean, pushed checkout, use the local deployment helper:
+
+```bash
+./deploy/deploy-local.sh
+```
+
+It runs the API and deployment tests, builds the container locally, deploys the
+tracked source, restarts Courier, and verifies the public health endpoint.
+Local environments, databases, caches, and credentials are excluded. Override
+`COURIER_HOST`, `COURIER_USER`, or `COURIER_HEALTH_URL` when targeting a
+different host.
+
+The equivalent manual process is:
 
 ```bash
 export COURIER_HOST=157.245.126.211
@@ -44,7 +55,6 @@ ssh root@$COURIER_HOST '
 '
 ```
 
-Run `pytest` and `docker build -t courier-api:local .` before redeploying.
 The deploy does not copy `.env.production`; production secrets remain in
 `/opt/courier/.env` on the host.
 

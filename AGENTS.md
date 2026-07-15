@@ -4,6 +4,9 @@
 
 - Keep verified changes committed and pushed to this repository as work is
   completed.
+- During iteration, validate and deploy Courier from the local checkout with
+  `deploy/deploy-local.sh` instead of using GitHub Actions as a deployment
+  mechanism. CI remains a cancelable validation backstop.
 - Treat a production Courier API deployment as a release: run the service and
   deployment tests, deploy the exact pushed revision, and verify health and any
   changed public routes before declaring it complete.
