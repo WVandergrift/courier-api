@@ -81,9 +81,33 @@ in `DNS.md` propagate), which also (re)writes the nginx block:
 
 ```bash
 ssh root@$COURIER_HOST
-certbot --nginx -d courier.systems -d www.courier.systems --redirect --non-interactive --agree-tos -m will.vandergrift@outlook.com
+certbot --nginx --cert-name courier.systems -d courier.systems -d www.courier.systems -d firmware.courier.systems --redirect --non-interactive --agree-tos -m will.vandergrift@outlook.com
 systemctl reload nginx
 ```
 
 If HTTPS ever regresses to HTTP-only after a deploy, re-run that certbot command
 to restore the `:443` block (it reuses the existing cert, no re-issue).
+
+## Public release assets
+
+`firmware.courier.systems` serves immutable, versioned Ember artifacts from
+`/var/www/courier-firmware`. It is deliberately separate from the Courier API
+and exposes only files explicitly promoted by the release workflow. Manifests
+are no-cache; versioned firmware and desktop assets are cached as immutable.
+
+Create the least-privileged publisher account once and install the public half
+of the dedicated GitHub Actions deploy key:
+
+```bash
+useradd --create-home --shell /bin/bash firmware-publisher
+install -d -o firmware-publisher -g firmware-publisher -m 755 /var/www/courier-firmware
+install -d -o firmware-publisher -g firmware-publisher -m 700 /home/firmware-publisher/.ssh
+install -o firmware-publisher -g firmware-publisher -m 600 /dev/null /home/firmware-publisher/.ssh/authorized_keys
+# Append the dedicated public key to authorized_keys.
+```
+
+The private half is stored only as the private `ember-core` repository secret
+`COURIER_FIRMWARE_SSH_KEY`. The account has no sudo access. GitHub Actions
+uploads into a run-specific `.incoming-*` directory, then invokes
+`/opt/courier/deploy/promote-release-assets.sh` to verify the tag, reject
+symlinks and changed releases, and atomically replace only the current manifest.

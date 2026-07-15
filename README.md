@@ -79,6 +79,7 @@ signature rules, database behavior, and relay registration/routing policy.
 
 - [Architecture and trust boundaries](docs/architecture.md)
 - [Ember installation enrollment](docs/ember-installations.md)
+- [Public Ember update origin](docs/firmware-updates.md)
 - [Production deployment](DEPLOYMENT.md)
 - [DNS and TLS bootstrap](DNS.md)
 - [Security policy](SECURITY.md)
