@@ -4,7 +4,8 @@
 
 Courier is the coordination service for Ember installations. It provides:
 
-- controller identity bootstrap and passwordless installation enrollment;
+- controller identity bootstrap, passwordless installation enrollment, and
+  approved-client controller-add grants;
 - APNs push delivery and an authenticated delivery dashboard;
 - Apple Universal Link and Android App Link association files;
 - the safe HTTPS landing route encoded on Ember Home Key NFC stickers;
@@ -74,8 +75,9 @@ docker build -t courier-api:local .
 docker run --rm --env-file .env -p 8000:8000 courier-api:local
 ```
 
-Tests cover push authentication and validation, enrollment identity and
-signature rules, database behavior, and relay registration/routing policy.
+Tests cover push authentication and validation, enrollment and controller-add
+identity/signature/replay rules, database behavior, and relay
+registration/routing policy.
 
 ## Documentation
 

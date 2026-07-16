@@ -7,7 +7,7 @@ challenges, push delivery, and an optional off-LAN relay.
 ```text
 Ember app ---- enrollment challenge ----> Courier <---- controller identity
     |                                        |
-    | local BLE + Home Key proof             +---- SQLite durable state
+    | local BLE + NFC/Test proof             +---- SQLite durable state
     |                                        +---- APNs
     +---------- local controller API         +---- optional relay WebSocket
 ```
@@ -20,6 +20,11 @@ Ember app ---- enrollment challenge ----> Courier <---- controller identity
 short-lived, signed installation-enrollment challenges. Courier stores public
 keys, membership, capabilities, and audit events. The Home Key `tagKey` secret
 is not sent to or stored by Courier.
+
+An approved client may also authorize one exact unclaimed controller for its
+existing installation. The five-minute grant binds both member and controller
+key thumbprints plus controller ID, tag ID, hardware model, nonce, and expiry;
+it is consumed atomically with controller membership creation.
 
 ### APNs delivery
 
@@ -39,8 +44,8 @@ forwarded operation.
 ### Persistence
 
 SQLite stores push delivery events, controller bootstraps, installations,
-members, enrollment challenges, and audit events. The production database is
-mounted at `/data/courier.db` inside the container.
+members, controller-add grants, enrollment challenges, and audit events. The
+production database is mounted at `/data/courier.db` inside the container.
 
 ## Trust boundaries
 
@@ -49,6 +54,8 @@ mounted at `/data/courier.db` inside the container.
 - Controller enrollment completion requires a valid P-256 signature over the
   server challenge.
 - Challenges expire after two minutes and are single-use.
+- Controller-add grants expire after five minutes, require an active client
+  administrator signature, and are one-use.
 - Device tokens are logged only as a hash, suffix, and length.
 - Home Key secrets live in the URI fragment and are never included in the HTTP
   request to `emberhome.lighting` (or the supported legacy `courier.systems`

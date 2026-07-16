@@ -91,6 +91,28 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ember_members_installation
                 ON ember_members(installation_id, created_at);
 
+            CREATE TABLE IF NOT EXISTS ember_controller_add_grants (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                authorizer_member_id TEXT NOT NULL REFERENCES ember_members(id),
+                controller_id TEXT NOT NULL,
+                controller_public_key TEXT NOT NULL,
+                controller_key_thumbprint TEXT NOT NULL,
+                tag_id TEXT NOT NULL,
+                hardware_model TEXT NOT NULL,
+                client_key_thumbprint TEXT NOT NULL,
+                server_nonce TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                authorized_at TEXT,
+                consumed_at TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_controller_add_grants_installation
+                ON ember_controller_add_grants(installation_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ember_controller_add_grants_controller
+                ON ember_controller_add_grants(controller_id, created_at DESC);
+
             CREATE TABLE IF NOT EXISTS ember_enrollment_challenges (
                 id TEXT PRIMARY KEY,
                 controller_id TEXT NOT NULL,
@@ -101,6 +123,7 @@ def init_db() -> None:
                 controller_public_key TEXT NOT NULL,
                 hardware_model TEXT NOT NULL,
                 retrofit INTEGER NOT NULL DEFAULT 0,
+                controller_add_grant_id TEXT REFERENCES ember_controller_add_grants(id),
                 server_nonce TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL,
@@ -153,6 +176,7 @@ def init_db() -> None:
                     controller_public_key TEXT NOT NULL,
                     hardware_model TEXT NOT NULL,
                     retrofit INTEGER NOT NULL DEFAULT 0,
+                    controller_add_grant_id TEXT REFERENCES ember_controller_add_grants(id),
                     server_nonce TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     expires_at TEXT NOT NULL,
@@ -165,10 +189,11 @@ def init_db() -> None:
                 INSERT INTO ember_enrollment_challenges
                     (id, controller_id, tag_id, proof_method, client_public_key,
                      client_key_thumbprint, controller_public_key, hardware_model,
-                     retrofit, server_nonce, created_at, expires_at, consumed_at)
+                     retrofit, controller_add_grant_id, server_nonce, created_at,
+                     expires_at, consumed_at)
                 SELECT c.id, c.controller_id, c.tag_id, c.proof_method,
                        c.client_public_key, c.client_key_thumbprint, b.public_key,
-                       b.hardware_model, 0, c.server_nonce, c.created_at,
+                       b.hardware_model, 0, NULL, c.server_nonce, c.created_at,
                        c.expires_at, c.consumed_at
                 FROM ember_enrollment_challenges_legacy c
                 JOIN ember_controller_bootstraps b
@@ -182,6 +207,18 @@ def init_db() -> None:
                     ON ember_enrollment_challenges(controller_id, created_at DESC)
                 """
             )
+        else:
+            challenge_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(ember_enrollment_challenges)")
+            }
+            if "controller_add_grant_id" not in challenge_columns:
+                conn.execute(
+                    """
+                    ALTER TABLE ember_enrollment_challenges
+                    ADD COLUMN controller_add_grant_id TEXT
+                        REFERENCES ember_controller_add_grants(id)
+                    """
+                )
         conn.commit()
 
 

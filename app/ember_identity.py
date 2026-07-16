@@ -22,6 +22,7 @@ from app.db import connect
 
 PROTOCOL = "ember-installation-v1"
 CHALLENGE_LIFETIME = timedelta(minutes=2)
+CONTROLLER_ADD_GRANT_LIFETIME = timedelta(minutes=5)
 CONTROLLER_CAPABILITIES = ["approve_clients", "sync_controller_documents"]
 CLIENT_CAPABILITIES = ["admin", "sync_installation_documents"]
 
@@ -69,6 +70,14 @@ def key_thumbprint(public_key: str) -> str:
     return _b64u_encode(hashlib.sha256(_b64u_decode(public_key, 65, "public key")).digest())
 
 
+def synthetic_controller_tag(controller_id: str) -> str:
+    return f"controller_{controller_id}"
+
+
+def bootstrap_tag_matches(bootstrap, controller_id: str, tag_id: str) -> bool:
+    return bootstrap["tag_id"] == tag_id or tag_id == synthetic_controller_tag(controller_id)
+
+
 def enrollment_message(
     proof_method: str,
     challenge_id: str,
@@ -88,15 +97,42 @@ def enrollment_message(
     ).encode("utf-8")
 
 
-def _verify_controller_signature(public_key: str, signature: str, message: bytes) -> None:
+def _verify_signature(public_key: str, signature: str, message: bytes, field: str) -> None:
     point = _b64u_decode(public_key, 65, "controller public key")
-    raw_signature = _b64u_decode(signature, 64, "controllerSignature")
+    raw_signature = _b64u_decode(signature, 64, field)
     r = int.from_bytes(raw_signature[:32], "big")
     s = int.from_bytes(raw_signature[32:], "big")
     if r == 0 or s == 0:
         raise InvalidSignature
     key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), point)
     key.verify(encode_dss_signature(r, s), message, ec.ECDSA(hashes.SHA256()))
+
+
+def controller_add_grant_message(
+    grant_id: str,
+    installation_id: str,
+    authorizer_member_id: str,
+    controller_id: str,
+    controller_key_thumbprint: str,
+    tag_id: str,
+    hardware_model: str,
+    client_key_thumbprint: str,
+    server_nonce: str,
+    expires_at: str,
+) -> bytes:
+    return (
+        "ember-controller-add-grant/v1\n"
+        f"{grant_id}\n"
+        f"{installation_id}\n"
+        f"{authorizer_member_id}\n"
+        f"{controller_id}\n"
+        f"{controller_key_thumbprint}\n"
+        f"{tag_id}\n"
+        f"{hardware_model}\n"
+        f"{client_key_thumbprint}\n"
+        f"{server_nonce}\n"
+        f"{expires_at}"
+    ).encode("utf-8")
 
 
 class ControllerBootstrapRequest(BaseModel):
@@ -133,6 +169,7 @@ class EnrollmentChallengeRequest(BaseModel):
     client_public_key: str = Field(alias="clientPublicKey")
     controller_public_key: str | None = Field(default=None, alias="controllerPublicKey")
     hardware_model: str | None = Field(default=None, alias="hardwareModel", min_length=1, max_length=64)
+    controller_add_grant_id: str | None = Field(default=None, alias="controllerAddGrantId")
 
     @field_validator("client_public_key")
     @classmethod
@@ -184,6 +221,204 @@ class EnrollmentCompleteResponse(BaseModel):
     member_id: str = Field(alias="memberId")
     controller_member_id: str = Field(alias="controllerMemberId")
     created_installation: bool = Field(alias="createdInstallation")
+
+
+class ControllerAddGrantRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    installation_id: str = Field(alias="installationId", min_length=1, max_length=64)
+    authorizer_member_id: str = Field(alias="authorizerMemberId", min_length=1, max_length=64)
+    controller_id: str = Field(alias="controllerId", pattern=r"^[A-F0-9]{12}$")
+    controller_public_key: str = Field(alias="controllerPublicKey")
+    tag_id: str = Field(alias="tagId", min_length=16, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
+    hardware_model: str = Field(alias="hardwareModel", min_length=1, max_length=64)
+
+    @field_validator("controller_public_key")
+    @classmethod
+    def validate_controller_public_key(cls, value: str) -> str:
+        return _normalize_public_key(value)
+
+
+class ControllerAddGrantResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    protocol: str
+    grant_id: str = Field(alias="grantId")
+    server_nonce: str = Field(alias="serverNonce")
+    expires_at: str = Field(alias="expiresAt")
+
+
+class ControllerAddGrantAuthorizeRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    client_signature: str = Field(alias="clientSignature")
+
+    @field_validator("client_signature")
+    @classmethod
+    def validate_client_signature(cls, value: str) -> str:
+        _b64u_decode(value, 64, "clientSignature")
+        return value
+
+
+class ControllerAddGrantAuthorizeResponse(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    protocol: str
+    grant_id: str = Field(alias="grantId")
+    authorized: bool
+    expires_at: str = Field(alias="expiresAt")
+
+
+def _active_admin_member(conn: sqlite3.Connection, installation_id: str, member_id: str):
+    member = conn.execute(
+        """
+        SELECT m.*, i.status AS installation_status
+        FROM ember_members m
+        JOIN ember_installations i ON i.id = m.installation_id
+        WHERE m.id = ? AND m.installation_id = ?
+        """,
+        (member_id, installation_id),
+    ).fetchone()
+    if (
+        not member
+        or member["kind"] != "client"
+        or member["revoked_at"]
+        or member["installation_status"] != "active"
+        or "admin" not in json.loads(member["capabilities_json"])
+    ):
+        raise HTTPException(status_code=403, detail="Controller authorization is unavailable.")
+    return member
+
+
+@router.post("/controller-add-grants", response_model=ControllerAddGrantResponse)
+def create_controller_add_grant(request: ControllerAddGrantRequest) -> ControllerAddGrantResponse:
+    now = _now()
+    expires_at = now + CONTROLLER_ADD_GRANT_LIFETIME
+    expires_at_text = _iso(expires_at)
+    grant_id = str(uuid4())
+    server_nonce = _b64u_encode(secrets.token_bytes(32))
+    controller_thumbprint = key_thumbprint(request.controller_public_key)
+
+    with connect() as conn:
+        authorizer = _active_admin_member(
+            conn, request.installation_id, request.authorizer_member_id
+        )
+        claimed = conn.execute(
+            "SELECT installation_id, revoked_at FROM ember_members WHERE kind = 'controller' AND subject_id = ?",
+            (request.controller_id,),
+        ).fetchone()
+        if claimed and (
+            claimed["installation_id"] != request.installation_id
+            or claimed["revoked_at"]
+        ):
+            raise HTTPException(status_code=409, detail="Controller already belongs to an installation.")
+        if claimed:
+            member_identity = conn.execute(
+                "SELECT public_key FROM ember_members WHERE kind = 'controller' AND subject_id = ?",
+                (request.controller_id,),
+            ).fetchone()
+            if not member_identity or member_identity["public_key"] != request.controller_public_key:
+                raise HTTPException(status_code=409, detail="Controller membership identity changed.")
+
+        bootstrap = conn.execute(
+            "SELECT * FROM ember_controller_bootstraps WHERE controller_id = ? OR tag_id = ?",
+            (request.controller_id, request.tag_id),
+        ).fetchone()
+        if bootstrap and not (
+            bootstrap["controller_id"] == request.controller_id
+            and bootstrap_tag_matches(bootstrap, request.controller_id, request.tag_id)
+            and bootstrap["public_key"] == request.controller_public_key
+            and bootstrap["hardware_model"] == request.hardware_model
+            and bootstrap["status"] == "active"
+        ):
+            raise HTTPException(status_code=409, detail="Controller authorization identity conflicts with an existing registration.")
+
+        conn.execute(
+            """
+            INSERT INTO ember_controller_add_grants
+                (id, installation_id, authorizer_member_id, controller_id,
+                 controller_public_key, controller_key_thumbprint, tag_id,
+                 hardware_model, client_key_thumbprint, server_nonce, created_at,
+                 expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                grant_id, request.installation_id, request.authorizer_member_id,
+                request.controller_id, request.controller_public_key,
+                controller_thumbprint, request.tag_id, request.hardware_model,
+                authorizer["key_thumbprint"], server_nonce, _iso(now),
+                expires_at_text,
+            ),
+        )
+        conn.commit()
+
+    return ControllerAddGrantResponse(
+        protocol=PROTOCOL,
+        grantId=grant_id,
+        serverNonce=server_nonce,
+        expiresAt=expires_at_text,
+    )
+
+
+@router.post(
+    "/controller-add-grants/{grant_id}/authorize",
+    response_model=ControllerAddGrantAuthorizeResponse,
+)
+def authorize_controller_add_grant(
+    grant_id: str, request: ControllerAddGrantAuthorizeRequest
+) -> ControllerAddGrantAuthorizeResponse:
+    with connect() as conn:
+        grant = conn.execute(
+            "SELECT * FROM ember_controller_add_grants WHERE id = ?", (grant_id,)
+        ).fetchone()
+        if not grant:
+            raise HTTPException(status_code=404, detail="Controller authorization is unavailable.")
+        authorizer = _active_admin_member(
+            conn, grant["installation_id"], grant["authorizer_member_id"]
+        )
+    if grant["consumed_at"]:
+        raise HTTPException(status_code=409, detail="Controller authorization was already used.")
+    if grant["authorized_at"]:
+        raise HTTPException(status_code=409, detail="Controller authorization was already approved.")
+    if _parse_iso(grant["expires_at"]) <= _now():
+        raise HTTPException(status_code=410, detail="Controller authorization expired.")
+
+    message = controller_add_grant_message(
+        grant["id"], grant["installation_id"], grant["authorizer_member_id"],
+        grant["controller_id"], grant["controller_key_thumbprint"], grant["tag_id"],
+        grant["hardware_model"], grant["client_key_thumbprint"], grant["server_nonce"],
+        grant["expires_at"],
+    )
+    try:
+        _verify_signature(authorizer["public_key"], request.client_signature, message, "clientSignature")
+    except (ValueError, InvalidSignature):
+        raise HTTPException(status_code=403, detail="Controller authorization signature is invalid.") from None
+
+    now = _iso(_now())
+    with connect() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        current = conn.execute(
+            "SELECT * FROM ember_controller_add_grants WHERE id = ?", (grant_id,)
+        ).fetchone()
+        if not current or current["authorized_at"] or current["consumed_at"]:
+            raise HTTPException(status_code=409, detail="Controller authorization was already used.")
+        if _parse_iso(current["expires_at"]) <= _now():
+            raise HTTPException(status_code=410, detail="Controller authorization expired.")
+        current_authorizer = _active_admin_member(
+            conn, current["installation_id"], current["authorizer_member_id"]
+        )
+        if current_authorizer["key_thumbprint"] != current["client_key_thumbprint"]:
+            raise HTTPException(status_code=409, detail="Controller authorization identity changed.")
+        conn.execute(
+            "UPDATE ember_controller_add_grants SET authorized_at = ? WHERE id = ?",
+            (now, grant_id),
+        )
+        conn.commit()
+
+    return ControllerAddGrantAuthorizeResponse(
+        protocol=PROTOCOL, grantId=grant_id, authorized=True,
+        expiresAt=grant["expires_at"],
+    )
 
 
 @router.post(
@@ -263,7 +498,13 @@ def begin_enrollment(request: EnrollmentChallengeRequest) -> EnrollmentChallenge
         if bootstrap:
             exact_identity = (
                 bootstrap["controller_id"] == request.controller_id
-                and bootstrap["tag_id"] == request.tag_id
+                and (
+                    bootstrap["tag_id"] == request.tag_id
+                    or (
+                        request.proof_method == "controller_button"
+                        and request.tag_id == synthetic_controller_tag(request.controller_id)
+                    )
+                )
                 and bootstrap["status"] == "active"
             )
             key_matches = (
@@ -281,13 +522,37 @@ def begin_enrollment(request: EnrollmentChallengeRequest) -> EnrollmentChallenge
         hardware_model = (
             bootstrap["hardware_model"] if bootstrap else request.hardware_model
         )
+        if request.controller_add_grant_id:
+            grant = conn.execute(
+                "SELECT * FROM ember_controller_add_grants WHERE id = ?",
+                (request.controller_add_grant_id,),
+            ).fetchone()
+            if (
+                not grant
+                or not grant["authorized_at"]
+                or grant["consumed_at"]
+                or _parse_iso(grant["expires_at"]) <= now
+            ):
+                raise HTTPException(status_code=403, detail="Controller authorization is unavailable.")
+            if not (
+                grant["controller_id"] == request.controller_id
+                and grant["controller_public_key"] == controller_public_key
+                and grant["tag_id"] == request.tag_id
+                and grant["hardware_model"] == hardware_model
+                and grant["client_key_thumbprint"] == thumbprint
+            ):
+                raise HTTPException(status_code=409, detail="Controller authorization does not match this enrollment.")
+            _active_admin_member(
+                conn, grant["installation_id"], grant["authorizer_member_id"]
+            )
         conn.execute(
             """
             INSERT INTO ember_enrollment_challenges
                 (id, controller_id, tag_id, proof_method, client_public_key,
                  client_key_thumbprint, controller_public_key, hardware_model,
-                 retrofit, server_nonce, created_at, expires_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 retrofit, controller_add_grant_id, server_nonce, created_at,
+                 expires_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 challenge_id,
@@ -299,6 +564,7 @@ def begin_enrollment(request: EnrollmentChallengeRequest) -> EnrollmentChallenge
                 controller_public_key,
                 hardware_model,
                 1 if retrofit else 0,
+                request.controller_add_grant_id,
                 server_nonce,
                 _iso(now),
                 _iso(expires_at),
@@ -341,10 +607,11 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
         challenge["server_nonce"],
     )
     try:
-        _verify_controller_signature(
+        _verify_signature(
             challenge["controller_public_key"],
             request.controller_signature,
             message,
+            "controllerSignature",
         )
     except (ValueError, InvalidSignature):
         raise HTTPException(status_code=403, detail="Controller approval is invalid.") from None
@@ -397,7 +664,9 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
                         ),
                     )
             elif not bootstrap or (
-                bootstrap["tag_id"] != current["tag_id"]
+                not bootstrap_tag_matches(
+                    bootstrap, current["controller_id"], current["tag_id"]
+                )
                 or bootstrap["public_key"] != current["controller_public_key"]
                 or bootstrap["status"] != "active"
             ):
@@ -407,20 +676,55 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
                 "SELECT * FROM ember_members WHERE kind = 'controller' AND subject_id = ?",
                 (current["controller_id"],),
             ).fetchone()
-            created_installation = controller_member is None
+            grant = None
+            authorizer = None
+            if current["controller_add_grant_id"]:
+                grant = conn.execute(
+                    "SELECT * FROM ember_controller_add_grants WHERE id = ?",
+                    (current["controller_add_grant_id"],),
+                ).fetchone()
+                if (
+                    not grant
+                    or not grant["authorized_at"]
+                    or grant["consumed_at"]
+                    or _parse_iso(grant["expires_at"]) <= _now()
+                ):
+                    raise HTTPException(status_code=403, detail="Controller authorization is unavailable.")
+                if not (
+                    grant["controller_id"] == current["controller_id"]
+                    and grant["controller_public_key"] == current["controller_public_key"]
+                    and grant["tag_id"] == current["tag_id"]
+                    and grant["hardware_model"] == current["hardware_model"]
+                    and grant["client_key_thumbprint"] == current["client_key_thumbprint"]
+                ):
+                    raise HTTPException(status_code=409, detail="Controller authorization identity changed.")
+                authorizer = _active_admin_member(
+                    conn, grant["installation_id"], grant["authorizer_member_id"]
+                )
+                if authorizer["key_thumbprint"] != grant["client_key_thumbprint"]:
+                    raise HTTPException(status_code=409, detail="Controller authorization identity changed.")
+
+            if grant and controller_member and (
+                controller_member["installation_id"] != grant["installation_id"]
+                or controller_member["public_key"] != current["controller_public_key"]
+                or controller_member["revoked_at"]
+            ):
+                raise HTTPException(status_code=409, detail="Controller already belongs to an installation.")
+            created_installation = controller_member is None and grant is None
             if controller_member and controller_member["revoked_at"]:
                 raise HTTPException(status_code=403, detail="Controller membership is revoked.")
 
-            if created_installation:
-                installation_id = str(uuid4())
+            if created_installation or (grant and not controller_member):
+                installation_id = grant["installation_id"] if grant else str(uuid4())
                 controller_member_id = str(uuid4())
-                conn.execute(
-                    """
-                    INSERT INTO ember_installations (id, status, revision, created_at, updated_at)
-                    VALUES (?, 'active', 1, ?, ?)
-                    """,
-                    (installation_id, now, now),
-                )
+                if created_installation:
+                    conn.execute(
+                        """
+                        INSERT INTO ember_installations (id, status, revision, created_at, updated_at)
+                        VALUES (?, 'active', 1, ?, ?)
+                        """,
+                        (installation_id, now, now),
+                    )
                 conn.execute(
                     """
                     INSERT INTO ember_members
@@ -442,7 +746,7 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
                     ),
                 )
             else:
-                installation_id = controller_member["installation_id"]
+                installation_id = grant["installation_id"] if grant else controller_member["installation_id"]
                 controller_member_id = controller_member["id"]
                 installation = conn.execute(
                     "SELECT status FROM ember_installations WHERE id = ?",
@@ -485,6 +789,14 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
                     ),
                 )
 
+            if grant:
+                if member_id != grant["authorizer_member_id"]:
+                    raise HTTPException(status_code=409, detail="Controller authorization client changed.")
+                conn.execute(
+                    "UPDATE ember_controller_add_grants SET consumed_at = ? WHERE id = ?",
+                    (now, grant["id"]),
+                )
+
             conn.execute(
                 "UPDATE ember_enrollment_challenges SET consumed_at = ? WHERE id = ?",
                 (now, challenge_id),
@@ -498,10 +810,18 @@ def complete_enrollment(challenge_id: str, request: EnrollmentCompleteRequest) -
                 """,
                 (
                     installation_id,
-                    controller_member_id,
-                    "installation_created" if created_installation else "client_enrolled",
-                    member_id,
-                    json.dumps({"challengeId": challenge_id}, separators=(",", ":")),
+                    member_id if grant else controller_member_id,
+                    ("controller_recovered" if controller_member else "controller_added") if grant else (
+                        "installation_created" if created_installation else "client_enrolled"
+                    ),
+                    controller_member_id if grant else member_id,
+                    json.dumps(
+                        {
+                            "challengeId": challenge_id,
+                            **({"controllerAddGrantId": grant["id"]} if grant else {}),
+                        },
+                        separators=(",", ":"),
+                    ),
                     now,
                 ),
             )
