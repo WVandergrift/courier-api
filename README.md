@@ -83,6 +83,7 @@ registration/routing policy.
 
 - [Architecture and trust boundaries](docs/architecture.md)
 - [Ember installation enrollment](docs/ember-installations.md)
+- [Temporary stock Oelo diagnostics](docs/oelo-diagnostics.md)
 - [Public Ember update origin](docs/firmware-updates.md)
 - [Production deployment](DEPLOYMENT.md)
 - [DNS and TLS bootstrap](DNS.md)
