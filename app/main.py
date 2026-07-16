@@ -142,9 +142,11 @@ app = FastAPI(title="Courier Push API", version="0.2.0", lifespan=lifespan)
 # Companion relay: the app<->daemon tunnel (WS agent + HTTP forward). See app/relay.py.
 from app.relay import router as relay_router  # noqa: E402
 from app.ember_identity import router as ember_identity_router  # noqa: E402
+from app.ember_recovery import router as ember_recovery_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(ember_identity_router)
+app.include_router(ember_recovery_router)
 
 EMBER_IOS_APP_ID = "3YWE9TBUAM.app.embercore"
 EMBER_ANDROID_PACKAGE = "app.embercore"

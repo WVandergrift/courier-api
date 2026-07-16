@@ -145,6 +145,22 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_ember_audit_installation
                 ON ember_audit_events(installation_id, id DESC);
+
+            CREATE TABLE IF NOT EXISTS ember_recovery_backups (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                controller_id TEXT NOT NULL,
+                backup_kind TEXT NOT NULL,
+                hardware_profile TEXT NOT NULL,
+                format_version INTEGER NOT NULL,
+                payload_json TEXT NOT NULL,
+                payload_digest TEXT NOT NULL,
+                captured_at TEXT NOT NULL,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_recovery_backups_controller
+                ON ember_recovery_backups(installation_id, controller_id, backup_kind, created_at DESC);
             """
         )
         challenge_columns = {

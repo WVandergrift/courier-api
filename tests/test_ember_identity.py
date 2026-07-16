@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import sqlite3
 from datetime import UTC, datetime, timedelta
 
@@ -15,6 +16,7 @@ from app.ember_identity import (
     enrollment_message,
     key_thumbprint,
 )
+from app.ember_recovery import recovery_message
 from app.main import app
 
 
@@ -596,3 +598,121 @@ def test_existing_challenge_schema_migrates_without_losing_identity(monkeypatch,
         "hardware_model": "oelo_esp32",
         "retrofit": 0,
     }
+
+
+def test_encrypted_recovery_backup_round_trip_and_kind_isolation(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    client_key = ec.generate_private_key(ec.SECP256R1())
+    payload = _b64u(b'{"ciphertext":"opaque","deviceWrap":"opaque"}')
+    digest = hashlib.sha256(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4))).hexdigest()
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        enrollment = _complete(
+            client, controller_key, client_key, _begin(client, client_key).json()
+        ).json()
+        backup_id = "22222222-2222-4222-8222-222222222222"
+        requested_at = _iso_for_test(datetime.now(UTC))
+        upload = client.post(
+            "/v1/ember/recovery-backups",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "controllerId": CONTROLLER_ID,
+                "backupId": backup_id,
+                "backupKind": "oelo_configuration",
+                "hardwareProfile": "oelo_esp32",
+                "formatVersion": 1,
+                "payload": payload,
+                "payloadDigest": digest,
+                "capturedAt": requested_at,
+                "requestedAt": requested_at,
+                "clientSignature": _sign(
+                    client_key,
+                    recovery_message(
+                        "upload", enrollment["installationId"], enrollment["memberId"],
+                        CONTROLLER_ID,
+                        f"{digest}:oelo_configuration:{backup_id}:{requested_at}",
+                        requested_at,
+                    ),
+                ),
+            },
+        )
+        query_at = _iso_for_test(datetime.now(UTC))
+        downloaded = client.post(
+            "/v1/ember/recovery-backups/latest",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "controllerId": CONTROLLER_ID,
+                "backupKind": "oelo_configuration",
+                "requestedAt": query_at,
+                "clientSignature": _sign(
+                    client_key,
+                    recovery_message(
+                        "latest", enrollment["installationId"], enrollment["memberId"],
+                        CONTROLLER_ID, "latest:oelo_configuration", query_at,
+                    ),
+                ),
+            },
+        )
+        missing_kind = client.post(
+            "/v1/ember/recovery-backups/latest",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "controllerId": CONTROLLER_ID,
+                "backupKind": "ember_rollback",
+                "requestedAt": query_at,
+                "clientSignature": _sign(
+                    client_key,
+                    recovery_message(
+                        "latest", enrollment["installationId"], enrollment["memberId"],
+                        CONTROLLER_ID, "latest:ember_rollback", query_at,
+                    ),
+                ),
+            },
+        )
+
+    assert upload.status_code == 200
+    assert upload.json()["payload"] is None
+    assert downloaded.status_code == 200
+    assert downloaded.json()["payload"] == payload
+    assert downloaded.json()["payloadDigest"] == digest
+    assert missing_kind.status_code == 404
+
+
+def test_recovery_backup_rejects_tampering_and_stale_authorization(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    client_key = ec.generate_private_key(ec.SECP256R1())
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        enrollment = _complete(
+            client, controller_key, client_key, _begin(client, client_key).json()
+        ).json()
+        stale_at = _iso_for_test(datetime.now(UTC) - timedelta(minutes=6))
+        response = client.post(
+            "/v1/ember/recovery-backups/latest",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "controllerId": CONTROLLER_ID,
+                "backupKind": "oelo_configuration",
+                "requestedAt": stale_at,
+                "clientSignature": _b64u(bytes(64)),
+            },
+        )
+        fresh_at = _iso_for_test(datetime.now(UTC))
+        tampered = client.post(
+            "/v1/ember/recovery-backups/latest",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "controllerId": CONTROLLER_ID,
+                "backupKind": "oelo_configuration",
+                "requestedAt": fresh_at,
+                "clientSignature": _b64u(bytes(64)),
+            },
+        )
+
+    assert response.status_code == 422
+    assert tampered.status_code == 403
