@@ -183,6 +183,28 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_ember_join_requests_candidate
                 ON ember_join_requests(candidate_key_thumbprint, created_at DESC);
 
+            CREATE TABLE IF NOT EXISTS ember_member_push_tokens (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                member_id TEXT NOT NULL REFERENCES ember_members(id),
+                platform TEXT NOT NULL,
+                environment TEXT NOT NULL,
+                app_topic TEXT NOT NULL,
+                token_ciphertext TEXT NOT NULL,
+                token_hash TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                last_validated_at TEXT NOT NULL,
+                revoked_at TEXT,
+                UNIQUE (member_id, platform, environment, app_topic)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_member_push_tokens_installation
+                ON ember_member_push_tokens(installation_id, revoked_at, updated_at DESC);
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_ember_member_push_tokens_active_token
+                ON ember_member_push_tokens(environment, app_topic, token_hash)
+                WHERE revoked_at IS NULL;
+
             CREATE TABLE IF NOT EXISTS ember_client_invitations (
                 id TEXT PRIMARY KEY,
                 installation_id TEXT NOT NULL REFERENCES ember_installations(id),

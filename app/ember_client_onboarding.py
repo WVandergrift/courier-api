@@ -10,7 +10,7 @@ from typing import Literal
 from uuid import uuid4
 
 from cryptography.exceptions import InvalidSignature
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.db import connect
@@ -24,6 +24,7 @@ from app.ember_identity import (
     _verify_signature,
     key_thumbprint,
 )
+from app.ember_push import dispatch_join_request_pushes
 
 
 JOIN_REQUEST_LIFETIME = timedelta(minutes=10)
@@ -197,7 +198,7 @@ def _insert_client_member(
 
 
 @router.post("/client-join-requests")
-def create_join_request(request: JoinRequestCreate):
+def create_join_request(request: JoinRequestCreate, background_tasks: BackgroundTasks):
     now = _now()
     thumbprint = key_thumbprint(request.client_public_key)
     with connect() as conn:
@@ -227,7 +228,11 @@ def create_join_request(request: JoinRequestCreate):
             (controller["installation_id"], thumbprint, _iso(now)),
         ).fetchone()
         if existing:
-            return _join_payload(existing, controller["controller_member_id"])
+            payload = _join_payload(existing, controller["controller_member_id"])
+            background_tasks.add_task(
+                dispatch_join_request_pushes, controller["installation_id"], existing["id"]
+            )
+            return payload
         request_id = str(uuid4())
         expires_at = _iso(now + JOIN_REQUEST_LIFETIME)
         conn.execute(
@@ -246,7 +251,11 @@ def create_join_request(request: JoinRequestCreate):
         )
         conn.commit()
         row = conn.execute("SELECT * FROM ember_join_requests WHERE id = ?", (request_id,)).fetchone()
-        return _join_payload(row, controller["controller_member_id"])
+        payload = _join_payload(row, controller["controller_member_id"])
+    background_tasks.add_task(
+        dispatch_join_request_pushes, controller["installation_id"], request_id
+    )
+    return payload
 
 
 def _join_payload(row, controller_member_id: str | None = None):

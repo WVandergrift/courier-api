@@ -17,6 +17,7 @@ from app.apns import ApnsClient, ApnsSend, Environment
 from app.auth import require_auth
 from app.db import init_db, insert_event, list_events
 from app.logging_config import configure_logging, log_fields, payload_summary, redact_token
+from app.ember_push import configure_ember_push
 
 
 logger = logging.getLogger("courier.api")
@@ -129,9 +130,11 @@ async def lifespan(_: FastAPI):
     logger.info("service_starting")
     init_db()
     apns_client = ApnsClient.from_env()
+    configure_ember_push(apns_client)
     try:
         yield
     finally:
+        configure_ember_push(None)
         if apns_client is not None:
             await apns_client.close()
         logger.info("service_stopped")
@@ -144,12 +147,14 @@ from app.relay import router as relay_router  # noqa: E402
 from app.ember_identity import router as ember_identity_router  # noqa: E402
 from app.ember_recovery import router as ember_recovery_router  # noqa: E402
 from app.ember_client_onboarding import router as ember_client_onboarding_router  # noqa: E402
+from app.ember_push import router as ember_push_router  # noqa: E402
 from app.oelo_diagnostics import router as oelo_diagnostics_router  # noqa: E402
 
 app.include_router(relay_router)
 app.include_router(ember_identity_router)
 app.include_router(ember_recovery_router)
 app.include_router(ember_client_onboarding_router)
+app.include_router(ember_push_router)
 app.include_router(oelo_diagnostics_router)
 
 EMBER_IOS_APP_ID = "3YWE9TBUAM.app.embercore"

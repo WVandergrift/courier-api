@@ -29,6 +29,7 @@ login. Ownership is proven locally, then represented by asymmetric member keys.
 | `POST` | `/v1/ember/client-join-requests` | Nearby controller ID and candidate key | Create an expiring request for existing clients to review |
 | `POST` | `/v1/ember/client-join-requests/pending` | Existing client signature | List undecided requests for an installation |
 | `POST` | `/v1/ember/client-join-requests/{id}/decision` | Existing client signature | Approve or deny one exact candidate key |
+| `POST` | `/v1/ember/member-push-tokens` | Existing client signature | Register an encrypted APNs token for Home access notifications |
 | `POST` | `/v1/ember/client-invitations` | Existing member locator | Prepare a 60-second one-time Share Home invitation |
 | `POST` | `/v1/ember/client-invitations/{id}/authorize` | Existing client signature | Authorize the exact invitation secret hash and expiry |
 | `POST` | `/v1/ember/client-invitations/{id}/redeem` | One-time invitation secret | Enroll the scanning client and consume the invitation |
@@ -86,6 +87,30 @@ by the sticker's factory NFC UID. Each controller may have its own tag. For
 Test-button enrollment, firmware uses `controller_<controllerId>` as a
 non-secret synthetic tag ID so the signed protocol still binds a stable
 controller-specific identity.
+
+## Home access push notifications
+
+An enrolled administrator may register one active APNs token per app,
+environment, and member. Courier encrypts the token using
+`EMBER_PUSH_TOKEN_KEY`; only its SHA-256 digest is searchable. Registration is
+authorized by this exact UTF-8 message:
+
+```text
+ember-member-push-v1
+register
+<installationId>
+<memberId>
+ios
+<sandbox-or-production>
+app.embercore
+<deviceToken>
+<requestedAt>
+```
+
+`requestedAt` must be within five minutes. When a client join request is
+created, Courier sends a generic alert to active client members. The payload
+contains only the public join-request ID. Delivery failure never fails the join
+request, and APNs `Unregistered` responses revoke the stored token.
 
 ## Data handling
 

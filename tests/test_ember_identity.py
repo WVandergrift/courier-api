@@ -22,6 +22,12 @@ from app.ember_client_onboarding import (
     client_join_list_message,
 )
 from app.ember_recovery import recovery_message
+from app.ember_push import (
+    EMBER_APNS_TOPIC,
+    configure_ember_push,
+    member_push_token_message,
+)
+from app.apns import ApnsResult
 from app.main import app
 
 
@@ -29,6 +35,17 @@ CONTROLLER_ID = "AABBCCDDEEFF"
 TAG_ID = "tag_01J2NFCEMBERCORE"
 SECOND_CONTROLLER_ID = "112233445566"
 SECOND_TAG_ID = "controller_112233445566"
+PUSH_TOKEN_KEY = base64.urlsafe_b64encode(b"k" * 32).decode("ascii")
+
+
+class FakeApnsClient:
+    def __init__(self, result: ApnsResult | None = None) -> None:
+        self.requests = []
+        self.result = result or ApnsResult(success=True, status_code=200, apns_id="ember-apns-1")
+
+    async def send(self, request):
+        self.requests.append(request)
+        return self.result
 
 
 def _b64u(value: bytes) -> str:
@@ -56,6 +73,7 @@ def _client(monkeypatch, tmp_path) -> TestClient:
     monkeypatch.setenv("APNS_TEAM_ID", "TEAM")
     monkeypatch.setenv("APNS_KEY_ID", "KEY")
     monkeypatch.setenv("APNS_PRIVATE_KEY", "PRIVATE")
+    monkeypatch.setenv("EMBER_PUSH_TOKEN_KEY", PUSH_TOKEN_KEY)
     return TestClient(app)
 
 
@@ -321,6 +339,135 @@ def test_existing_client_approves_pending_client_join(monkeypatch, tmp_path):
     assert completed.json()["installationId"] == home["installationId"]
     assert completed.json()["memberId"] == decision.json()["memberId"]
     assert replay.status_code == 409
+
+
+def test_join_request_pushes_registered_home_members(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    authorizer_key = ec.generate_private_key(ec.SECP256R1())
+    candidate_key = ec.generate_private_key(ec.SECP256R1())
+    device_token = "ab" * 32
+    fake_apns = FakeApnsClient()
+    with _client(monkeypatch, tmp_path) as client:
+        configure_ember_push(fake_apns)
+        assert _register_controller(client, controller_key).status_code == 200
+        home = _complete(
+            client, controller_key, authorizer_key, _begin(client, authorizer_key).json()
+        ).json()
+        requested_at = _iso_for_test(datetime.now(UTC))
+        registration = client.post(
+            "/v1/ember/member-push-tokens",
+            json={
+                "installationId": home["installationId"],
+                "memberId": home["memberId"],
+                "platform": "ios",
+                "environment": "sandbox",
+                "appTopic": EMBER_APNS_TOPIC,
+                "deviceToken": device_token,
+                "requestedAt": requested_at,
+                "clientSignature": _sign(
+                    authorizer_key,
+                    member_push_token_message(
+                        "register",
+                        home["installationId"],
+                        home["memberId"],
+                        "ios",
+                        "sandbox",
+                        EMBER_APNS_TOPIC,
+                        device_token,
+                        requested_at,
+                    ),
+                ),
+            },
+        )
+        pending = client.post(
+            "/v1/ember/client-join-requests",
+            json={
+                "controllerId": CONTROLLER_ID,
+                "clientPublicKey": _public_key(candidate_key),
+                "clientName": "Kitchen iPad",
+            },
+        )
+
+    assert registration.status_code == 200
+    assert registration.json()["registered"] is True
+    assert pending.status_code == 200
+    assert len(fake_apns.requests) == 1
+    push = fake_apns.requests[0]
+    assert push.device_token == device_token
+    assert push.topic == EMBER_APNS_TOPIC
+    assert push.environment == "sandbox"
+    assert push.payload["aps"]["alert"]["title"] == "Another device wants to join Ember"
+    assert push.payload["kind"] == "ember-client-join"
+    assert push.payload["requestId"] == pending.json()["requestId"]
+    with sqlite3.connect(tmp_path / "courier.db") as conn:
+        stored = conn.execute(
+            "SELECT token_ciphertext, token_hash, revoked_at FROM ember_member_push_tokens"
+        ).fetchone()
+        event = conn.execute(
+            "SELECT status, apns_topic, invalid_token, device_token_hash, device_token_suffix "
+            "FROM push_events ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+    assert device_token not in stored[0]
+    assert stored[1] == hashlib.sha256(device_token.encode("ascii")).hexdigest()
+    assert stored[2] is None
+    assert event[:3] == ("sent", EMBER_APNS_TOPIC, 0)
+    assert event[3] == hashlib.sha256(device_token.encode("ascii")).hexdigest()
+    assert event[4] == device_token[-8:]
+
+
+def test_invalid_apns_token_is_revoked_without_failing_join(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    authorizer_key = ec.generate_private_key(ec.SECP256R1())
+    candidate_key = ec.generate_private_key(ec.SECP256R1())
+    device_token = "cd" * 32
+    fake_apns = FakeApnsClient(ApnsResult(
+        success=False,
+        status_code=410,
+        invalid_token=True,
+        error_code="Unregistered",
+        error_message="Unregistered",
+    ))
+    with _client(monkeypatch, tmp_path) as client:
+        configure_ember_push(fake_apns)
+        assert _register_controller(client, controller_key).status_code == 200
+        home = _complete(
+            client, controller_key, authorizer_key, _begin(client, authorizer_key).json()
+        ).json()
+        requested_at = _iso_for_test(datetime.now(UTC))
+        registration_payload = {
+            "installationId": home["installationId"],
+            "memberId": home["memberId"],
+            "platform": "ios",
+            "environment": "sandbox",
+            "appTopic": EMBER_APNS_TOPIC,
+            "deviceToken": device_token,
+            "requestedAt": requested_at,
+        }
+        registration_payload["clientSignature"] = _sign(
+            authorizer_key,
+            member_push_token_message(
+                "register", home["installationId"], home["memberId"], "ios",
+                "sandbox", EMBER_APNS_TOPIC, device_token, requested_at,
+            ),
+        )
+        assert client.post(
+            "/v1/ember/member-push-tokens", json=registration_payload
+        ).status_code == 200
+        pending = client.post(
+            "/v1/ember/client-join-requests",
+            json={
+                "controllerId": CONTROLLER_ID,
+                "clientPublicKey": _public_key(candidate_key),
+                "clientName": "Kitchen iPad",
+            },
+        )
+
+    assert pending.status_code == 200
+    with sqlite3.connect(tmp_path / "courier.db") as conn:
+        revoked_at = conn.execute(
+            "SELECT revoked_at FROM ember_member_push_tokens"
+        ).fetchone()[0]
+    assert revoked_at is not None
 
 
 def test_share_home_invitation_is_signed_short_lived_and_one_time(monkeypatch, tmp_path):
