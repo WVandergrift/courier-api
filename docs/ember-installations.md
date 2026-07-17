@@ -30,6 +30,9 @@ login. Ownership is proven locally, then represented by asymmetric member keys.
 | `POST` | `/v1/ember/client-join-requests/pending` | Existing client signature | List undecided requests for an installation |
 | `POST` | `/v1/ember/client-join-requests/{id}/decision` | Existing client signature | Approve or deny one exact candidate key |
 | `POST` | `/v1/ember/member-push-tokens` | Existing client signature | Register an encrypted APNs token for Home access notifications |
+| `POST` | `/v1/ember/installation-documents/{key}` | Existing client signature | Read installation-scoped app data and house photos |
+| `PUT` | `/v1/ember/installation-documents/{key}` | Existing client signature and expected revision | Create or replace installation-scoped app data |
+| `DELETE` | `/v1/ember/installation-documents/{key}` | Existing client signature and expected revision | Remove installation-scoped app data |
 | `POST` | `/v1/ember/client-invitations` | Existing member locator | Prepare a 60-second one-time Share Home invitation |
 | `POST` | `/v1/ember/client-invitations/{id}/authorize` | Existing client signature | Authorize the exact invitation secret hash and expiry |
 | `POST` | `/v1/ember/client-invitations/{id}/redeem` | One-time invitation secret | Enroll the scanning client and consume the invitation |
@@ -117,3 +120,13 @@ request, and APNs `Unregistered` responses revoke the stored token.
 Courier stores the public tag ID and public identities. It never receives the
 Home Key secret. Revocation and additional-device approval should operate on
 installation members, not shared passwords.
+
+House mapping metadata and resized house photos are installation documents, so
+all enrolled clients see one Home rather than maintaining divergent device-only
+copies. Every read and mutation is signed by an active client administrator.
+Writes and deletes include the last observed document revision, allowing active
+clients to detect a race and observe the winning revision before reapplying an
+explicit local save. Each payload is capped at 12 MiB, each installation is
+capped at 128 MiB, and payloads are SHA-256 verified and recorded in the
+installation audit log. IndexedDB remains an app-side offline cache, not the
+source of truth after an installation membership exists.

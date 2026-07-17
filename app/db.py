@@ -220,6 +220,22 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_ember_client_invitations_installation
                 ON ember_client_invitations(installation_id, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ember_installation_documents (
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                document_key TEXT NOT NULL,
+                revision INTEGER NOT NULL,
+                content_type TEXT NOT NULL,
+                payload BLOB NOT NULL,
+                payload_digest TEXT NOT NULL,
+                updated_by_member_id TEXT NOT NULL REFERENCES ember_members(id),
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                PRIMARY KEY (installation_id, document_key)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_installation_documents_updated
+                ON ember_installation_documents(installation_id, updated_at DESC);
             """
         )
         challenge_columns = {

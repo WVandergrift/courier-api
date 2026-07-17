@@ -22,6 +22,7 @@ from app.ember_client_onboarding import (
     client_join_list_message,
 )
 from app.ember_recovery import recovery_message
+from app.ember_installation_documents import installation_document_message
 from app.ember_push import (
     EMBER_APNS_TOPIC,
     configure_ember_push,
@@ -951,6 +952,154 @@ def test_encrypted_recovery_backup_round_trip_and_kind_isolation(monkeypatch, tm
     assert downloaded.json()["payload"] == payload
     assert downloaded.json()["payloadDigest"] == digest
     assert missing_kind.status_code == 404
+
+
+def test_installation_documents_sync_with_revision_and_membership_isolation(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    client_key = ec.generate_private_key(ec.SECP256R1())
+    payload_bytes = b'{"version":1,"views":[],"spans":[]}'
+    payload = _b64u(payload_bytes)
+    digest = hashlib.sha256(payload_bytes).hexdigest()
+    document_key = "spatial/project"
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        enrollment = _complete(
+            client, controller_key, client_key, _begin(client, client_key).json()
+        ).json()
+        requested_at = _iso_for_test(datetime.now(UTC))
+        written = client.put(
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "expectedRevision": 0,
+                "contentType": "application/json",
+                "payload": payload,
+                "payloadDigest": digest,
+                "requestedAt": requested_at,
+                "clientSignature": _sign(
+                    client_key,
+                    installation_document_message(
+                        "write", enrollment["installationId"], enrollment["memberId"],
+                        document_key, 0, digest, "application/json", requested_at,
+                    ),
+                ),
+            },
+        )
+        read_at = _iso_for_test(datetime.now(UTC))
+        downloaded = client.post(
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "requestedAt": read_at,
+                "clientSignature": _sign(
+                    client_key,
+                    installation_document_message(
+                        "read", enrollment["installationId"], enrollment["memberId"],
+                        document_key, 0, "-", "-", read_at,
+                    ),
+                ),
+            },
+        )
+        conflict_at = _iso_for_test(datetime.now(UTC))
+        conflict = client.put(
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "expectedRevision": 0,
+                "contentType": "application/json",
+                "payload": payload,
+                "payloadDigest": digest,
+                "requestedAt": conflict_at,
+                "clientSignature": _sign(
+                    client_key,
+                    installation_document_message(
+                        "write", enrollment["installationId"], enrollment["memberId"],
+                        document_key, 0, digest, "application/json", conflict_at,
+                    ),
+                ),
+            },
+        )
+
+    assert written.status_code == 200
+    assert written.json()["revision"] == 1
+    assert written.json()["payload"] is None
+    assert downloaded.status_code == 200
+    assert downloaded.json()["payload"] == payload
+    assert downloaded.json()["payloadDigest"] == digest
+    assert conflict.status_code == 409
+
+
+def test_installation_document_rejects_bad_signature_and_supports_delete(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    client_key = ec.generate_private_key(ec.SECP256R1())
+    payload_bytes = b"photo"
+    payload = _b64u(payload_bytes)
+    digest = hashlib.sha256(payload_bytes).hexdigest()
+    document_key = "spatial/photos/front"
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        enrollment = _complete(
+            client, controller_key, client_key, _begin(client, client_key).json()
+        ).json()
+        requested_at = _iso_for_test(datetime.now(UTC))
+        bad_signature = client.put(
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "expectedRevision": 0,
+                "contentType": "image/jpeg",
+                "payload": payload,
+                "payloadDigest": digest,
+                "requestedAt": requested_at,
+                "clientSignature": _b64u(bytes(64)),
+            },
+        )
+        valid_signature = _sign(
+            client_key,
+            installation_document_message(
+                "write", enrollment["installationId"], enrollment["memberId"],
+                document_key, 0, digest, "image/jpeg", requested_at,
+            ),
+        )
+        assert client.put(
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "expectedRevision": 0,
+                "contentType": "image/jpeg",
+                "payload": payload,
+                "payloadDigest": digest,
+                "requestedAt": requested_at,
+                "clientSignature": valid_signature,
+            },
+        ).status_code == 200
+        delete_at = _iso_for_test(datetime.now(UTC))
+        deleted = client.request(
+            "DELETE",
+            f"/v1/ember/installation-documents/{document_key}",
+            json={
+                "installationId": enrollment["installationId"],
+                "memberId": enrollment["memberId"],
+                "expectedRevision": 1,
+                "requestedAt": delete_at,
+                "clientSignature": _sign(
+                    client_key,
+                    installation_document_message(
+                        "delete", enrollment["installationId"], enrollment["memberId"],
+                        document_key, 1, "-", "-", delete_at,
+                    ),
+                ),
+            },
+        )
+
+    assert bad_signature.status_code == 403
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
 
 
 def test_recovery_backup_rejects_tampering_and_stale_authorization(monkeypatch, tmp_path):

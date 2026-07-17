@@ -44,8 +44,10 @@ forwarded operation.
 ### Persistence
 
 SQLite stores push delivery events, controller bootstraps, installations,
-members, controller-add grants, enrollment challenges, and audit events. The
-production database is mounted at `/data/courier.db` inside the container.
+members, controller-add grants, enrollment challenges, revisioned installation
+documents, and audit events. Installation documents include app metadata and
+bounded house-photo blobs. The production database is mounted at
+`/data/courier.db` inside the container.
 
 ## Trust boundaries
 
