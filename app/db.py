@@ -161,6 +161,43 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_ember_recovery_backups_controller
                 ON ember_recovery_backups(installation_id, controller_id, backup_kind, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ember_join_requests (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                controller_id TEXT NOT NULL,
+                candidate_public_key TEXT NOT NULL,
+                candidate_key_thumbprint TEXT NOT NULL,
+                candidate_name TEXT NOT NULL,
+                server_nonce TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                decided_at TEXT,
+                approving_member_id TEXT REFERENCES ember_members(id),
+                member_id TEXT REFERENCES ember_members(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_join_requests_installation
+                ON ember_join_requests(installation_id, status, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ember_join_requests_candidate
+                ON ember_join_requests(candidate_key_thumbprint, created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ember_client_invitations (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                authorizer_member_id TEXT NOT NULL REFERENCES ember_members(id),
+                secret_hash TEXT NOT NULL,
+                server_nonce TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                authorized_at TEXT,
+                consumed_at TEXT,
+                member_id TEXT REFERENCES ember_members(id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_client_invitations_installation
+                ON ember_client_invitations(installation_id, created_at DESC);
             """
         )
         challenge_columns = {

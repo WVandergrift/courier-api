@@ -16,6 +16,11 @@ from app.ember_identity import (
     enrollment_message,
     key_thumbprint,
 )
+from app.ember_client_onboarding import (
+    client_invitation_message,
+    client_join_approval_message,
+    client_join_list_message,
+)
 from app.ember_recovery import recovery_message
 from app.main import app
 
@@ -247,6 +252,126 @@ def test_claimed_controller_enrolls_another_client_in_same_installation(monkeypa
     assert second["createdInstallation"] is False
     assert second["installationId"] == first["installationId"]
     assert second["memberId"] != first["memberId"]
+
+
+def test_existing_client_approves_pending_client_join(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    authorizer_key = ec.generate_private_key(ec.SECP256R1())
+    candidate_key = ec.generate_private_key(ec.SECP256R1())
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        home = _complete(
+            client, controller_key, authorizer_key, _begin(client, authorizer_key).json()
+        ).json()
+        pending = client.post(
+            "/v1/ember/client-join-requests",
+            json={
+                "controllerId": CONTROLLER_ID,
+                "clientPublicKey": _public_key(candidate_key),
+                "clientName": "Kitchen iPad",
+            },
+        ).json()
+        requested_at = _iso_for_test(datetime.now(UTC))
+        listed = client.post(
+            "/v1/ember/client-join-requests/pending",
+            json={
+                "installationId": home["installationId"],
+                "memberId": home["memberId"],
+                "requestedAt": requested_at,
+                "clientSignature": _sign(
+                    authorizer_key,
+                    client_join_list_message(home["installationId"], home["memberId"], requested_at),
+                ),
+            },
+        )
+        decision = client.post(
+            f"/v1/ember/client-join-requests/{pending['requestId']}/decision",
+            json={
+                "installationId": home["installationId"],
+                "approvingMemberId": home["memberId"],
+                "decision": "approve",
+                "clientSignature": _sign(
+                    authorizer_key,
+                    client_join_approval_message(
+                        pending["requestId"], home["installationId"],
+                        pending["candidateKeyThumbprint"], home["memberId"],
+                        "approve", pending["serverNonce"],
+                    ),
+                ),
+            },
+        )
+        completed = client.get(
+            f"/v1/ember/client-join-requests/{pending['requestId']}",
+            params={"clientPublicKey": _public_key(candidate_key)},
+        )
+        replay = client.post(
+            f"/v1/ember/client-join-requests/{pending['requestId']}/decision",
+            json={
+                "installationId": home["installationId"],
+                "approvingMemberId": home["memberId"],
+                "decision": "approve",
+                "clientSignature": _b64u(bytes(64)),
+            },
+        )
+
+    assert listed.status_code == 200
+    assert listed.json()["requests"][0]["clientName"] == "Kitchen iPad"
+    assert decision.status_code == 200
+    assert completed.status_code == 200
+    assert completed.json()["installationId"] == home["installationId"]
+    assert completed.json()["memberId"] == decision.json()["memberId"]
+    assert replay.status_code == 409
+
+
+def test_share_home_invitation_is_signed_short_lived_and_one_time(monkeypatch, tmp_path):
+    controller_key = ec.generate_private_key(ec.SECP256R1())
+    authorizer_key = ec.generate_private_key(ec.SECP256R1())
+    candidate_key = ec.generate_private_key(ec.SECP256R1())
+    with _client(monkeypatch, tmp_path) as client:
+        assert _register_controller(client, controller_key).status_code == 200
+        home = _complete(
+            client, controller_key, authorizer_key, _begin(client, authorizer_key).json()
+        ).json()
+        invitation = client.post(
+            "/v1/ember/client-invitations",
+            json={
+                "installationId": home["installationId"],
+                "authorizerMemberId": home["memberId"],
+            },
+        ).json()
+        authorized = client.post(
+            f"/v1/ember/client-invitations/{invitation['invitationId']}/authorize",
+            json={
+                "clientSignature": _sign(
+                    authorizer_key,
+                    client_invitation_message(
+                        invitation["invitationId"], home["installationId"], home["memberId"],
+                        invitation["secretHash"], invitation["serverNonce"], invitation["expiresAt"],
+                    ),
+                ),
+            },
+        )
+        redeemed = client.post(
+            f"/v1/ember/client-invitations/{invitation['invitationId']}/redeem",
+            json={
+                "secret": invitation["secret"],
+                "clientPublicKey": _public_key(candidate_key),
+                "clientName": "Guest iPad",
+            },
+        )
+        replay = client.post(
+            f"/v1/ember/client-invitations/{invitation['invitationId']}/redeem",
+            json={
+                "secret": invitation["secret"],
+                "clientPublicKey": _public_key(candidate_key),
+                "clientName": "Guest iPad",
+            },
+        )
+
+    assert authorized.status_code == 200
+    assert redeemed.status_code == 200
+    assert redeemed.json()["installationId"] == home["installationId"]
+    assert replay.status_code == 409
 
 
 def test_controller_add_grant_adds_exact_controller_to_existing_installation(monkeypatch, tmp_path):

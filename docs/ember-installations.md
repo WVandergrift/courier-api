@@ -26,6 +26,12 @@ login. Ownership is proven locally, then represented by asymmetric member keys.
 | `POST` | `/v1/ember/controller-add-grants/{id}/authorize` | Existing client P-256 signature | Approve the controller capability |
 | `POST` | `/v1/ember/enrollment-challenges` | Public, rate-limited by deployment edge | Begin a short-lived ownership challenge |
 | `POST` | `/v1/ember/enrollment-challenges/{id}/complete` | Controller signature | Consume the challenge and enroll the client |
+| `POST` | `/v1/ember/client-join-requests` | Nearby controller ID and candidate key | Create an expiring request for existing clients to review |
+| `POST` | `/v1/ember/client-join-requests/pending` | Existing client signature | List undecided requests for an installation |
+| `POST` | `/v1/ember/client-join-requests/{id}/decision` | Existing client signature | Approve or deny one exact candidate key |
+| `POST` | `/v1/ember/client-invitations` | Existing member locator | Prepare a 60-second one-time Share Home invitation |
+| `POST` | `/v1/ember/client-invitations/{id}/authorize` | Existing client signature | Authorize the exact invitation secret hash and expiry |
+| `POST` | `/v1/ember/client-invitations/{id}/redeem` | One-time invitation secret | Enroll the scanning client and consume the invitation |
 
 The generated OpenAPI schema at `/docs` is the source of truth for request and
 response fields.
