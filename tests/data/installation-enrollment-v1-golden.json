@@ -1,0 +1,25 @@
+{
+  "protocol": "ember-installation-v1",
+  "controllerId": "AABBCCDDEEFF",
+  "tagId": "tag_01J2NFCEMBERCORE",
+  "challengeId": "123e4567-e89b-12d3-a456-426614174000",
+  "proofMethod": "home_key_ble",
+  "tagKeyHex": "000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f",
+  "serverNonce": "ICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "clientPublicKey": "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+  "clientKeyThumbprint": "aYvqY9xEo0RmP_FCmuoQhC3ye2uZHvJYZrLGwCzcxb4",
+  "nfcBleProofMessage": "ember-nfc-ble-proof/v1\nhome_key_ble\nAABBCCDDEEFF\ntag_01J2NFCEMBERCORE\n123e4567-e89b-12d3-a456-426614174000\nICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8\nBGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU",
+  "tagProof": "c5lZ8uY3SZIOaBRLh78yh7F364OTIshCV0tt-U5R0kw",
+  "courierEnrollmentMessage": "ember-courier-enrollment/v1\nhome_key_ble\n123e4567-e89b-12d3-a456-426614174000\nAABBCCDDEEFF\ntag_01J2NFCEMBERCORE\naYvqY9xEo0RmP_FCmuoQhC3ye2uZHvJYZrLGwCzcxb4\nICEiIyQlJicoKSorLC0uLzAxMjM0NTY3ODk6Ozw9Pj8",
+  "installationDocument": {
+    "action": "write",
+    "installationId": "f4f3c2d1-1111-4222-8333-123456789abc",
+    "memberId": "c4f3c2d1-1111-4222-8333-123456789abc",
+    "documentKey": "spatial/photos/front",
+    "expectedRevision": 2,
+    "payloadDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "contentType": "image/jpeg",
+    "requestedAt": "2026-07-17T16:00:00.000Z",
+    "message": "ember-installation-document-v1\nwrite\nf4f3c2d1-1111-4222-8333-123456789abc\nc4f3c2d1-1111-4222-8333-123456789abc\nspatial/photos/front\n2\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nimage/jpeg\n2026-07-17T16:00:00.000Z"
+  }
+}
