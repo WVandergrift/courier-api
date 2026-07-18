@@ -12,6 +12,7 @@ firmware and manifests that already contain its immutable URLs.
 - `/ember-core/releases/vMAJOR.MINOR.PATCH/firmware/` — immutable controller images and checksums
 - `/ember-core/releases/vMAJOR.MINOR.PATCH/desktop/` — immutable desktop bundles and updater signatures
 - `/ember-core/desktop/latest.json` — current signed Tauri updater manifest
+- `/ai/gemma3-1b-it-int4.task` — immutable on-device Gemma 3 1B model bundle
 
 The manifests are intentionally unauthenticated and contain no installation or
 customer data. Downloads are public because embedded controllers and shipped
@@ -22,3 +23,7 @@ and its provisional OTA boot before accepting an update.
 The release publisher stages a complete directory and promotes it atomically.
 An existing version may be re-published only when every byte is identical; a
 different artifact requires a new semantic-version patch release.
+
+The AI model is also a deployable public artifact. Its filename identifies the
+model and quantization, so those bytes must not be replaced in place. Publish a
+new filename and update the consuming app when the model changes.
