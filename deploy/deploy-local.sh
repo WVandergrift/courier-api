@@ -32,6 +32,7 @@ fi
 
 "$python_bin" -m pytest
 docker build -t courier-api:local .
+python3 -m py_compile deploy/build-controller-release-manifest.py
 bash -n deploy/install-firmware-tls-chain.sh
 bash -n deploy/courier-firmware-chain-renew-hook.sh
 bash -n deploy/promote-release-assets.sh
@@ -51,6 +52,9 @@ ssh "$target" '
   docker build -t courier-api:latest /opt/courier
   cp /opt/courier/deploy/courier.service /etc/systemd/system/courier.service
   /opt/courier/deploy/install-firmware-tls-chain.sh
+  /opt/courier/deploy/build-controller-release-manifest.py \
+    /var/www/courier-firmware/ember-core/releases.json \
+    /var/www/courier-firmware/ember-core/controller-releases.json
   ln -sf /opt/courier/deploy/courier-firmware-chain-renew-hook.sh \
     /etc/letsencrypt/renewal-hooks/deploy/courier-firmware-chain
   cp /opt/courier/deploy/nginx.conf /etc/nginx/sites-available/courier

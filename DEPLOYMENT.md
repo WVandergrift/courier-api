@@ -109,6 +109,11 @@ cross-sign lets their constrained mbedTLS verifier terminate at that anchor.
 `deploy-local.sh` installs the derived chain and a Certbot deploy hook so it is
 rebuilt and nginx is reloaded after every successful renewal.
 
+Controllers also receive a compact view of the five newest firmware releases
+at the normal manifest URL, selected by their HTTP User-Agent. The full public
+manifest remains unchanged for apps, release tooling, and browsers. Deployment
+and firmware promotion both regenerate the compact view atomically.
+
 ## Browser flasher
 
 `flash.emberhome.lighting` is served directly by nginx from

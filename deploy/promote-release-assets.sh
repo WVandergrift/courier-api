@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
 if [[ $# -ne 3 ]]; then
   echo "usage: $0 <incoming-directory> <vMAJOR.MINOR.PATCH> <firmware|desktop>" >&2
   exit 64
@@ -55,6 +57,8 @@ if [[ $kind == firmware ]]; then
   python3 -m json.tool "$manifest" >/dev/null
   install -m 644 "$manifest" "$root/releases.json.next"
   mv "$root/releases.json.next" "$root/releases.json"
+  "$script_dir/build-controller-release-manifest.py" \
+    "$root/releases.json" "$root/controller-releases.json"
 else
   latest="$incoming/latest.json"
   [[ -f $latest ]] || { echo "staged desktop manifest is missing" >&2; exit 66; }

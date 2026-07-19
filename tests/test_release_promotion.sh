@@ -19,6 +19,7 @@ first="$COURIER_FIRMWARE_ROOT/.incoming-first"
 stage_firmware "$first"
 "$promote" "$first" "$tag" firmware
 test -f "$COURIER_FIRMWARE_ROOT/ember-core/releases/$tag/firmware/ember-core-oelo-esp32.bin"
+test -f "$COURIER_FIRMWARE_ROOT/ember-core/controller-releases.json"
 python3 -m json.tool "$COURIER_FIRMWARE_ROOT/ember-core/releases.json" >/dev/null
 
 identical="$COURIER_FIRMWARE_ROOT/.incoming-identical"
