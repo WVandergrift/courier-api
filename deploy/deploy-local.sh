@@ -32,6 +32,8 @@ fi
 
 "$python_bin" -m pytest
 docker build -t courier-api:local .
+bash -n deploy/install-firmware-tls-chain.sh
+bash -n deploy/courier-firmware-chain-renew-hook.sh
 bash -n deploy/promote-release-assets.sh
 bash tests/test_release_promotion.sh
 
@@ -48,6 +50,9 @@ ssh "$target" '
   set -euo pipefail
   docker build -t courier-api:latest /opt/courier
   cp /opt/courier/deploy/courier.service /etc/systemd/system/courier.service
+  /opt/courier/deploy/install-firmware-tls-chain.sh
+  ln -sf /opt/courier/deploy/courier-firmware-chain-renew-hook.sh \
+    /etc/letsencrypt/renewal-hooks/deploy/courier-firmware-chain
   cp /opt/courier/deploy/nginx.conf /etc/nginx/sites-available/courier
   ln -sf /etc/nginx/sites-available/courier /etc/nginx/sites-enabled/courier
   rm -f /etc/nginx/sites-enabled/default
