@@ -15,6 +15,7 @@ import json
 from pathlib import Path
 
 from app.ember_identity import enrollment_message, key_thumbprint
+from app.ember_board_sightings import board_sighting_message
 from app.ember_installation_documents import installation_document_message
 
 GOLDEN = json.loads(
@@ -53,6 +54,18 @@ def test_enrollment_message_matches_golden_vector():
 
 def test_key_thumbprint_matches_golden_vector():
     assert key_thumbprint(GOLDEN["clientPublicKey"]) == GOLDEN["clientKeyThumbprint"]
+
+
+def test_board_sighting_message_matches_golden_vector():
+    sighting = GOLDEN["boardSighting"]
+    assert board_sighting_message(
+        sighting["controllerId"],
+        sighting["installationId"],
+        sighting["boardName"],
+        sighting["boardSuffix"],
+        sighting["observedAt"],
+        sighting["medianRssi"],
+    ) == sighting["message"].encode("utf-8")
 
 
 def test_installation_document_message_matches_golden_vector():

@@ -6,6 +6,7 @@ Courier is the coordination service for Ember installations. It provides:
 
 - controller identity bootstrap, passwordless installation enrollment, and
   approved-client controller-add grants;
+- signed new-board sightings with installation-wide notification deduplication;
 - APNs push delivery and an authenticated delivery dashboard;
 - Apple Universal Link and Android App Link association files;
 - the safe HTTPS landing route encoded on Ember Home Key NFC stickers;

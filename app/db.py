@@ -205,6 +205,33 @@ def init_db() -> None:
                 ON ember_member_push_tokens(environment, app_topic, token_hash)
                 WHERE revoked_at IS NULL;
 
+            CREATE TABLE IF NOT EXISTS ember_board_sightings (
+                id TEXT PRIMARY KEY,
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                controller_member_id TEXT NOT NULL REFERENCES ember_members(id),
+                controller_id TEXT NOT NULL,
+                board_name TEXT NOT NULL,
+                board_suffix TEXT NOT NULL,
+                observed_at TEXT NOT NULL,
+                median_rssi INTEGER NOT NULL,
+                message_digest TEXT NOT NULL UNIQUE,
+                received_at TEXT NOT NULL,
+                notification_queued INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_ember_board_sightings_installation
+                ON ember_board_sightings(installation_id, board_suffix, received_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_ember_board_sightings_controller
+                ON ember_board_sightings(controller_id, received_at DESC);
+
+            CREATE TABLE IF NOT EXISTS ember_board_notification_windows (
+                installation_id TEXT NOT NULL REFERENCES ember_installations(id),
+                board_suffix TEXT NOT NULL,
+                last_queued_at TEXT NOT NULL,
+                sighting_id TEXT NOT NULL REFERENCES ember_board_sightings(id),
+                PRIMARY KEY (installation_id, board_suffix)
+            );
+
             CREATE TABLE IF NOT EXISTS ember_client_invitations (
                 id TEXT PRIMARY KEY,
                 installation_id TEXT NOT NULL REFERENCES ember_installations(id),

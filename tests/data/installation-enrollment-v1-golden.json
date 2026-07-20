@@ -21,5 +21,14 @@
     "contentType": "image/jpeg",
     "requestedAt": "2026-07-17T16:00:00.000Z",
     "message": "ember-installation-document-v1\nwrite\nf4f3c2d1-1111-4222-8333-123456789abc\nc4f3c2d1-1111-4222-8333-123456789abc\nspatial/photos/front\n2\naaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nimage/jpeg\n2026-07-17T16:00:00.000Z"
+  },
+  "boardSighting": {
+    "controllerId": "AABBCCDDEEFF",
+    "installationId": "f4f3c2d1-1111-4222-8333-123456789abc",
+    "boardName": "Ember Core 4913F8",
+    "boardSuffix": "4913F8",
+    "observedAt": "2026-07-18T15:30:00Z",
+    "medianRssi": "-58",
+    "message": "ember-board-sighting/v1\nAABBCCDDEEFF\nf4f3c2d1-1111-4222-8333-123456789abc\nEmber Core 4913F8\n4913F8\n2026-07-18T15:30:00Z\n-58"
   }
 }
