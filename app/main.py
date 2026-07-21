@@ -148,7 +148,6 @@ from app.ember_identity import router as ember_identity_router  # noqa: E402
 from app.ember_recovery import router as ember_recovery_router  # noqa: E402
 from app.ember_client_onboarding import router as ember_client_onboarding_router  # noqa: E402
 from app.ember_push import router as ember_push_router  # noqa: E402
-from app.ember_board_sightings import router as ember_board_sightings_router  # noqa: E402
 from app.ember_installation_documents import router as ember_installation_documents_router  # noqa: E402
 from app.oelo_diagnostics import router as oelo_diagnostics_router  # noqa: E402
 
@@ -157,7 +156,6 @@ app.include_router(ember_identity_router)
 app.include_router(ember_recovery_router)
 app.include_router(ember_client_onboarding_router)
 app.include_router(ember_push_router)
-app.include_router(ember_board_sightings_router)
 app.include_router(ember_installation_documents_router)
 app.include_router(oelo_diagnostics_router)
 

@@ -30,7 +30,6 @@ login. Ownership is proven locally, then represented by asymmetric member keys.
 | `POST` | `/v1/ember/client-join-requests/pending` | Existing client signature | List undecided requests for an installation |
 | `POST` | `/v1/ember/client-join-requests/{id}/decision` | Existing client signature | Approve or deny one exact candidate key |
 | `POST` | `/v1/ember/member-push-tokens` | Existing client signature | Register an encrypted APNs token for Home access notifications |
-| `POST` | `/v1/ember/board-sightings` | Enrolled controller signature | Report a nearby factory-new board and notify active Home members |
 | `POST` | `/v1/ember/installation-documents/{key}` | Existing client signature | Read installation-scoped app data and house photos |
 | `PUT` | `/v1/ember/installation-documents/{key}` | Existing client signature and expected revision | Create or replace installation-scoped app data |
 | `DELETE` | `/v1/ember/installation-documents/{key}` | Existing client signature and expected revision | Remove installation-scoped app data |
@@ -115,30 +114,6 @@ app.embercore
 created, Courier sends a generic alert to active client members. The payload
 contains only the public join-request ID. Delivery failure never fails the join
 request, and APNs `Unregistered` responses revoke the stored token.
-
-## New-board sighting notifications
-
-An active enrolled controller can report a factory-new board observed nearby.
-Courier verifies the controller's P-256 signature, controller-to-installation
-membership, and a ten-minute observation window before retaining the sighting.
-The controller signs these exact UTF-8 bytes:
-
-```text
-ember-board-sighting/v1
-<controllerId>
-<installationId>
-<boardName>
-<boardSuffix>
-<observedAt>
-<medianRssi>
-```
-
-An identical signed observation is a replay and returns `409`. Fresh reports
-inside the same Home for the same board suffix still return `200`, but Courier
-atomically queues at most one notification per 24 hours. APNs receives the
-collapse ID `board-<boardSuffix>` as an additional device-side safeguard.
-Only the public board name and suffix are included in the push payload; setup
-still requires the normal local enrollment proof.
 
 ## Data handling
 
