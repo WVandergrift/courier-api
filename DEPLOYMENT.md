@@ -102,12 +102,13 @@ The nginx configuration owns the `:443` blocks. Re-run the `certbot certonly`
 command only when the certificate's hostname set changes; routine renewals reuse
 the same on-disk certificate path.
 
-The firmware origin serves a validated chain derived from Certbot's full chain
-that stops before the cross-signed ISRG Root X2 certificate. ESP32 controllers
-already trust the compact self-signed X2 root, and omitting the redundant
-cross-sign lets their constrained mbedTLS verifier terminate at that anchor.
-`deploy-local.sh` installs the derived chain and a Certbot deploy hook so it is
-rebuilt and nginx is reloaded after every successful renewal.
+The firmware origin and main Courier API serve a validated chain derived from
+Certbot's full chain that stops before the cross-signed ISRG Root X2
+certificate. ESP32 controllers call both origins and already trust the compact
+self-signed X2 root; omitting the redundant cross-sign lets their constrained
+mbedTLS verifier terminate at that anchor. `deploy-local.sh` installs the
+derived chain and a Certbot deploy hook so it is rebuilt and nginx is reloaded
+after every successful renewal.
 
 Controllers also receive a compact view of the five newest firmware releases
 at the normal manifest URL, selected by their HTTP User-Agent. The full public
