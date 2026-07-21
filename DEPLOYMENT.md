@@ -28,6 +28,10 @@ Local environments, databases, caches, and credentials are excluded. Override
 `COURIER_HOST`, `COURIER_USER`, or `COURIER_HEALTH_URL` when targeting a
 different host.
 
+The health response includes the full deployed Git revision. Ember's local
+release runner uses it to skip Courier when the checkout already matches
+production.
+
 The equivalent manual process is:
 
 ```bash

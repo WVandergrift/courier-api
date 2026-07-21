@@ -20,6 +20,20 @@ class FakeApnsClient:
         return None
 
 
+def test_health_reports_deployed_revision(tmp_path, monkeypatch):
+    monkeypatch.setenv("COURIER_DB_PATH", str(tmp_path / "courier.db"))
+    monkeypatch.setenv("COURIER_REVISION", "abc123")
+    monkeypatch.setenv("APNS_TEAM_ID", "TEAM")
+    monkeypatch.setenv("APNS_KEY_ID", "KEY")
+    monkeypatch.setenv("APNS_PRIVATE_KEY", "PRIVATE")
+
+    with TestClient(app) as client:
+        response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "revision": "abc123"}
+
+
 def test_requires_auth(tmp_path, monkeypatch):
     monkeypatch.setenv("COURIER_API_TOKEN", "test-token")
     monkeypatch.setenv("COURIER_DB_PATH", str(tmp_path / "courier.db"))

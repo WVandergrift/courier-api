@@ -29,9 +29,10 @@ python_bin=python3
 if [[ -x .venv/bin/python ]]; then
   python_bin=.venv/bin/python
 fi
+revision=$(git rev-parse HEAD)
 
 "$python_bin" -m pytest
-docker build -t courier-api:local .
+docker build --build-arg "COURIER_REVISION=$revision" -t courier-api:local .
 python3 -m py_compile deploy/build-controller-release-manifest.py
 bash -n deploy/install-firmware-tls-chain.sh
 bash -n deploy/courier-firmware-chain-renew-hook.sh
@@ -47,9 +48,9 @@ rsync -az --delete \
   --exclude '__pycache__' \
   ./ "$target:/opt/courier/"
 
-ssh "$target" '
+ssh "$target" "
   set -euo pipefail
-  docker build -t courier-api:latest /opt/courier
+  docker build --build-arg 'COURIER_REVISION=$revision' -t courier-api:latest /opt/courier
   cp /opt/courier/deploy/courier.service /etc/systemd/system/courier.service
   /opt/courier/deploy/install-firmware-tls-chain.sh
   /opt/courier/deploy/build-controller-release-manifest.py \
@@ -65,7 +66,7 @@ ssh "$target" '
   systemctl daemon-reload
   systemctl restart courier.service
   systemctl is-active --quiet courier.service
-'
+"
 
 healthy=false
 for _ in {1..12}; do
@@ -81,4 +82,11 @@ if [[ "$healthy" != true ]]; then
   exit 1
 fi
 
-printf 'Courier deployed from %s and healthy at %s\n' "$(git rev-parse --short HEAD)" "$health_url"
+deployed_revision=$(curl --fail --silent --show-error "$health_url" | \
+  "$python_bin" -c 'import json,sys; print(json.load(sys.stdin).get("revision", ""))')
+if [[ "$deployed_revision" != "$revision" ]]; then
+  echo "Courier is healthy but reports revision $deployed_revision instead of $revision." >&2
+  exit 1
+fi
+
+printf 'Courier deployed from %s and healthy at %s\n' "${revision:0:12}" "$health_url"

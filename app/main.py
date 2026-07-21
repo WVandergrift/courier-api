@@ -250,7 +250,10 @@ async def ember_home_landing() -> HTMLResponse:
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok"}
+    return {
+        "status": "ok",
+        "revision": os.getenv("COURIER_REVISION", "unknown"),
+    }
 
 
 @app.get("/.well-known/apple-app-site-association", include_in_schema=False)
