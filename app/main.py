@@ -41,6 +41,11 @@ class PushRequest(BaseModel):
     badge: int | None = Field(default=None, ge=0)
     category: str | None = Field(default=None, max_length=64)
     thread_id: str | None = Field(default=None, alias="threadId", max_length=64)
+    interruption_level: Literal["passive", "active", "time-sensitive", "critical"] | None = Field(
+        default=None,
+        alias="interruptionLevel",
+    )
+    relevance_score: float | None = Field(default=None, alias="relevanceScore", ge=0, le=1)
     collapse_id: str | None = Field(default=None, alias="collapseId", max_length=64)
     expiration: int | None = Field(default=None, ge=0)
 
@@ -92,6 +97,10 @@ class PushRequest(BaseModel):
         # thread-id groups related pushes (e.g. one ticket) into a single thread.
         if self.thread_id:
             aps["thread-id"] = self.thread_id
+        if self.interruption_level:
+            aps["interruption-level"] = self.interruption_level
+        if self.relevance_score is not None:
+            aps["relevance-score"] = self.relevance_score
 
         payload: dict[str, Any] = {"aps": aps}
         # Custom data goes under a top-level "body" key, NOT spread at the top

@@ -164,6 +164,36 @@ def test_category_and_thread_id_land_in_aps(tmp_path, monkeypatch):
     assert body["options"] == ["Proceed anyway", "Wait for approval"]
 
 
+def test_time_sensitive_interruption_level_lands_in_aps(tmp_path, monkeypatch):
+    monkeypatch.setenv("COURIER_API_TOKEN", "test-token")
+    monkeypatch.setenv("COURIER_DB_PATH", str(tmp_path / "courier.db"))
+    monkeypatch.setenv("APNS_TEAM_ID", "TEAM")
+    monkeypatch.setenv("APNS_KEY_ID", "KEY")
+    monkeypatch.setenv("APNS_PRIVATE_KEY", "PRIVATE")
+
+    fake = FakeApnsClient()
+    import app.main as main
+
+    with TestClient(app) as client:
+        main.apns_client = fake
+        response = client.post(
+            "/v1/push/ios",
+            headers={"Authorization": "Bearer test-token"},
+            json={
+                "deviceToken": "abcdef1234567890abcdef1234567890",
+                "apnsTopic": "app.nachoaverage.alwae",
+                "title": "Lucas needs a ride",
+                "interruptionLevel": "time-sensitive",
+                "relevanceScore": 1,
+            },
+        )
+
+    assert response.status_code == 200
+    aps = fake.requests[0].payload["aps"]
+    assert aps["interruption-level"] == "time-sensitive"
+    assert aps["relevance-score"] == 1
+
+
 def test_basic_auth_uses_password(tmp_path, monkeypatch):
     monkeypatch.setenv("COURIER_API_TOKEN", "test-token")
     monkeypatch.setenv("COURIER_DB_PATH", str(tmp_path / "courier.db"))
