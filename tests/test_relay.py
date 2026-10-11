@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import base64
+import json
+import logging
 import time
 
 import anyio
@@ -13,6 +14,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import app.relay as relay
+from app.logging_config import JsonFormatter
 from app.main import app
 from app.relay import RelayHub, hub, verify_register
 
@@ -420,3 +422,127 @@ def test_daemon_reregistering_closes_old_streams_with_1001_without_cross_wiring(
         assert recv(new_phone) == {"type": "websocket.send", "text": "mine"}
         with pytest.raises(TimeoutError):
             recv(old_phone, timeout=0.2)
+
+
+@pytest.mark.parametrize("bad_code", [1005, 1006, 2999, 5000, "4401", True, None])
+def test_daemon_stream_close_with_an_unsendable_code_closes_the_phone_with_1000(monkeypatch, tmp_path, bad_code):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        agent.send_json({"type": "stream.close", "sid": sid, "code": bad_code, "reason": "x" * 200})
+        closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 1000)
+        assert closed["reason"] == "x" * 123
+
+
+class BrokenAgent(FakeAgent):
+    """A registered daemon socket whose sends fail once `fail_on` frame types arrive."""
+
+    def __init__(self, hub_ref: RelayHub, fail_on: set[str]):
+        super().__init__(hub_ref)
+        self.fail_on = fail_on
+
+    async def send_json(self, frame: dict):
+        if frame.get("type") in self.fail_on:
+            raise RuntimeError("socket is gone")
+        await super().send_json(frame)
+
+
+@pytest.mark.parametrize("fail_on", [{"stream.open"}, {"stream.data", "stream.close"}])
+def test_stream_closes_with_4404_when_the_daemon_socket_cannot_be_written(monkeypatch, tmp_path, fail_on):
+    agent = BrokenAgent(hub, fail_on)
+    hub.register("BROKEN", agent)
+    try:
+        with _client(monkeypatch, tmp_path) as client:
+            with client.websocket_connect("/v1/relay/BROKEN/stream") as phone:
+                if "stream.open" not in fail_on:
+                    phone.send_text("hello")
+                closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 4404)
+    finally:
+        hub.unregister("BROKEN", agent)
+
+
+class _Capture(logging.Handler):
+    def __init__(self):
+        super().__init__(logging.INFO)
+        self.records: list[logging.LogRecord] = []
+
+    def emit(self, record):
+        self.records.append(record)
+
+
+def test_stream_logs_sid_key_prefix_sizes_and_codes_but_never_frame_contents(monkeypatch, tmp_path):
+    secret_up, secret_down = "PHONE-SECRET-ciphertext", "DAEMON-SECRET-ciphertext"
+    # The app's startup replaces root handlers (and pytest's caplog), so capture on the relay logger itself.
+    capture = _Capture()
+    relay_logger = logging.getLogger("courier.relay")
+    monkeypatch.setattr(relay_logger, "level", logging.INFO)
+    monkeypatch.setattr(relay_logger, "handlers", [capture])
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+        phone.send_text(secret_up)
+        recv_json(agent)
+        agent.send_json({"type": "stream.data", "sid": sid, "data": secret_down})
+        recv(phone)
+        agent.send_json({"type": "stream.close", "sid": sid, "code": 1000, "reason": ""})
+        recv(phone)
+        unknown_key_id = key_id[::-1]
+        with client.websocket_connect(f"/v1/relay/{unknown_key_id}/stream") as rejected:
+            recv(rejected)
+
+    lines = [JsonFormatter().format(r) for r in capture.records]
+    events = {json.loads(line)["message"]: json.loads(line) for line in lines}
+    assert events["relay_stream_opened"]["sid"] == sid
+    assert events["relay_stream_opened"]["key_id"] == key_id[:8]
+    closed = events["relay_stream_closed"]
+    assert (closed["sid"], closed["code"]) == (sid, 1000)
+    assert (closed["bytes_up"], closed["bytes_down"]) == (len(secret_up), len(secret_down))
+    assert events["relay_stream_rejected"]["code"] == 4404
+    assert events["relay_stream_rejected"]["key_id"] == unknown_key_id[:8]
+    for line in lines:
+        assert "SECRET" not in line
+        assert key_id not in line and unknown_key_id not in line
+
+
+class UnwritablePhone:
+    """A phone socket that accepts and stays connected but fails every write."""
+
+    def __init__(self):
+        self.closed_with: tuple[int, str] | None = None
+
+    async def accept(self):
+        return None
+
+    async def receive(self):
+        await asyncio.Event().wait()
+
+    async def send_text(self, data: str):
+        raise RuntimeError("write failed")
+
+    async def close(self, code: int = 1000, reason: str = ""):
+        self.closed_with = (code, reason)
+
+
+def test_unexpected_relay_error_closes_the_stream_with_1011_and_tells_the_daemon():
+    async def go():
+        h = RelayHub()
+        agent = FakeAgent(h)
+        h.register("k", agent)
+        phone = UnwritablePhone()
+        original_hub = relay.hub
+        relay.hub = h
+        try:
+            handler = asyncio.create_task(relay.relay_stream(phone, "k"))
+            while not agent.sent:
+                await asyncio.sleep(0)
+            sid = agent.sent[0]["sid"]
+            h.stream_data_from_agent(agent, sid, "frame")
+            await asyncio.wait_for(handler, timeout=2)
+        finally:
+            relay.hub = original_hub
+        return sid, agent.sent[-1], phone.closed_with
+
+    sid, last_to_daemon, phone_close = asyncio.run(go())
+    assert last_to_daemon == {"type": "stream.close", "sid": sid, "code": 1011, "reason": "relay error"}
+    assert phone_close == (1011, "relay error")

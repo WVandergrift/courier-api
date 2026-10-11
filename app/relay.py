@@ -39,6 +39,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
+from app.logging_config import log_fields
+
 logger = logging.getLogger("courier.relay")
 
 REGISTER_SKEW_MS = 5 * 60 * 1000
@@ -135,7 +137,6 @@ class RelayHub:
         finally:
             self._pending.pop(request_id, None)
 
-
     def open_stream(self, key_id: str, phone: WebSocket) -> _Stream | int:
         """Allocate a stream on the daemon's current agent socket, or return the
         close code that rejects it."""
@@ -211,6 +212,8 @@ class _Stream:
         # daemon's agent socket, which every stream and request shares.
         self.outbox: asyncio.Queue = asyncio.Queue()
         self.last_activity = time.monotonic()
+        self.bytes_up = 0
+        self.bytes_down = 0
         self.ended: asyncio.Future = asyncio.get_running_loop().create_future()
 
     def touch(self) -> None:
@@ -332,11 +335,17 @@ async def _pump_phone_to_agent(stream: _Stream) -> None:
         if text is None:
             stream.end(1003, "binary frames are not supported", notify_agent=True)
             return
-        if len(text.encode("utf-8")) > STREAM_MAX_FRAME_BYTES:
+        size = len(text.encode("utf-8"))
+        if size > STREAM_MAX_FRAME_BYTES:
             stream.end(1009, "frame too large", notify_agent=True)
             return
         stream.touch()
-        await stream.agent.send_json({"type": "stream.data", "sid": stream.sid, "data": text})
+        stream.bytes_up += size
+        try:
+            await stream.agent.send_json({"type": "stream.data", "sid": stream.sid, "data": text})
+        except Exception:  # noqa: BLE001 - a failed write means the daemon socket is gone
+            stream.end(4404, "daemon not connected", notify_agent=False)
+            return
 
 
 async def _pump_agent_to_phone(stream: _Stream) -> None:
@@ -347,6 +356,19 @@ async def _pump_agent_to_phone(stream: _Stream) -> None:
             stream.end(code, reason, notify_agent=False)
             return
         await stream.phone.send_text(payload)
+        stream.bytes_down += len(payload.encode("utf-8"))
+
+
+async def _guarded(pump, stream: _Stream) -> None:
+    """Run a pump so that an unexpected error ends the stream instead of
+    leaving it open until the idle timeout."""
+    try:
+        await pump(stream)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("relay_stream_error", extra=log_fields(sid=stream.sid, key_id=stream.key_id[:8], error=type(exc).__name__))
+        stream.end(1011, "relay error", notify_agent=True)
 
 
 @router.websocket("/v1/relay/{key_id}/stream")
@@ -356,11 +378,22 @@ async def relay_stream(ws: WebSocket, key_id: str) -> None:
     await ws.accept()
     opened = hub.open_stream(key_id, ws)
     if isinstance(opened, int):
+        logger.info("relay_stream_rejected", extra=log_fields(key_id=key_id[:8], code=opened))
         await ws.close(code=opened)
         return
     stream = opened
-    await stream.agent.send_json({"type": "stream.open", "sid": stream.sid})
-    pumps = [asyncio.create_task(_pump_phone_to_agent(stream)), asyncio.create_task(_pump_agent_to_phone(stream))]
+    try:
+        await stream.agent.send_json({"type": "stream.open", "sid": stream.sid})
+    except Exception:  # noqa: BLE001 - a failed write means the daemon socket is gone
+        hub.remove_stream(stream)
+        logger.info("relay_stream_rejected", extra=log_fields(key_id=key_id[:8], code=4404))
+        await ws.close(code=4404)
+        return
+    logger.info("relay_stream_opened", extra=log_fields(sid=stream.sid, key_id=key_id[:8]))
+    pumps = [
+        asyncio.create_task(_guarded(_pump_phone_to_agent, stream)),
+        asyncio.create_task(_guarded(_pump_agent_to_phone, stream)),
+    ]
     try:
         while not stream.ended.done():
             remaining = stream.last_activity + STREAM_IDLE_S - time.monotonic()
@@ -387,6 +420,16 @@ async def _finish_stream(stream: _Stream) -> None:
             await stream.phone.close(code=code, reason=reason)
         except Exception:  # noqa: BLE001 - the phone may already be gone
             pass
+    logger.info(
+        "relay_stream_closed",
+        extra=log_fields(
+            sid=stream.sid,
+            key_id=stream.key_id[:8],
+            code=code,
+            bytes_up=stream.bytes_up,
+            bytes_down=stream.bytes_down,
+        ),
+    )
 
 
 @router.get("/v1/relay/{key_id}/status")
