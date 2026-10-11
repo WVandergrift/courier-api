@@ -114,6 +114,31 @@ at the normal manifest URL, selected by their HTTP User-Agent. The full public
 manifest remains unchanged for apps, release tooling, and browsers. Deployment
 and firmware promotion both regenerate the compact view atomically.
 
+## Relay WebSockets
+
+nginx proxies two long-lived WebSocket paths to Courier on the `:443` API
+server block: the daemon tunnel `/v1/relay/agent` and app live streams
+`/v1/relay/<keyId>/stream`. Both go through `location /`, which sets the
+`Upgrade`/`Connection` headers and a 3600 s read/send timeout. Because the
+redeploy copies `deploy/nginx.conf` verbatim, `tests/test_nginx_relay.py`
+checks that the API block keeps `listen 443 ssl`, its certificate paths, and
+those upgrade headers for both paths. A new `/v1/relay/` location must repeat
+the upgrade headers.
+
+After a deploy that touches the relay, check the stream route end to end (an
+unknown key id must upgrade and then close with 4404, not fail the upgrade):
+
+```bash
+python3 - <<'PY'
+import asyncio, websockets  # pip install websockets
+async def main():
+    async with websockets.connect("wss://emberhome.lighting/v1/relay/not-a-daemon/stream") as ws:
+        await ws.wait_closed()
+        print(ws.close_code)  # expect 4404
+asyncio.run(main())
+PY
+```
+
 ## Browser flasher
 
 `flash.emberhome.lighting` is served directly by nginx from

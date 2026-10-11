@@ -45,13 +45,31 @@ Useful local URLs:
 | Installation identity | `/v1/ember/*` | Register controllers and complete signed client enrollment |
 | iOS push | `POST /v1/push/ios` | Send a structured APNs notification |
 | Delivery events | `GET /v1/events`, `/dashboard` | Inspect redacted provider results |
-| Companion relay | `/v1/relay/*` | Route authenticated off-LAN request/response frames |
+| Companion relay | `/v1/relay/*` | Route authenticated off-LAN request/response frames and live streams |
 | Home Key links | `/ember/t/{tagId}` | Open Ember without exposing the URI fragment secret |
 | Platform association | `/.well-known/*` | Associate `emberhome.lighting` with the Ember apps |
 
 Every protected administrative endpoint accepts
 `Authorization: Bearer $COURIER_API_TOKEN`. The dashboard also accepts HTTP
 Basic authentication with any username and the token as its password.
+
+### Companion relay
+
+| Path | Caller | Purpose |
+|---|---|---|
+| `WS /v1/relay/agent` | Pulse daemon | Outbound tunnel; requires `COURIER_API_TOKEN` and a signed `register` frame |
+| `POST /v1/relay/{keyId}/req` | Pulse app | One signed request/response through the daemon's tunnel |
+| `GET /v1/relay/{keyId}/status` | Pulse app | `{"online": bool}` for the daemon's tunnel |
+| `WS /v1/relay/{keyId}/stream` | Pulse app | Live chat/voice stream (Pulse stream protocol v1) |
+
+Courier multiplexes each stream onto the daemon's tunnel as `stream.open`,
+`stream.data`, and `stream.close` frames and never reads stream contents; the
+app and daemon run their own handshake and encryption. Limits: text frames
+only, up to 64 KiB; at most 8 open streams per daemon (4429); 5 minutes with no
+frames closes the stream (4408). A stream to an unregistered daemon closes with
+4404, and streams close when the daemon's tunnel drops (4404) or is replaced by
+a re-registration (1001). The contract lives in the Pulse repository at
+`tools/pulse-daemon/docs/stream-protocol.md`.
 
 ## Configuration
 
@@ -77,8 +95,9 @@ docker run --rm --env-file .env -p 8000:8000 courier-api:local
 ```
 
 Tests cover push authentication and validation, enrollment and controller-add
-identity/signature/replay rules, database behavior, and relay
-registration/routing policy.
+identity/signature/replay rules, database behavior, relay
+registration/routing policy, relay stream routing and limits, and the nginx
+TLS and WebSocket upgrade settings for the relay sockets.
 
 ## Documentation
 

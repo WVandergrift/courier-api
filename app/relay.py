@@ -23,6 +23,15 @@ Protocol (JSON frames):
 
   app -> courier:  POST /v1/relay/{keyId}/req  {method,path,headers,body}
                    -> 200 {status,headers,body} | 502 offline | 504 timeout
+
+Live streams (Pulse stream protocol v1, tools/pulse-daemon/docs/stream-protocol.md):
+  app -> courier:  WebSocket /v1/relay/{keyId}/stream, opaque text frames
+  courier -> daemon: {"type":"stream.open","sid"}
+  courier <-> daemon: {"type":"stream.data","sid","data"}  one app text frame
+  courier <-> daemon: {"type":"stream.close","sid","code","reason"}
+  Close codes Courier sends: 4404 daemon not connected, 4429 more than 8
+  streams, 4408 idle 5 min, 1009 frame > 64 KiB, 1003 binary frame,
+  1013 app not reading, 1001 daemon re-registered, 1011 relay error.
 """
 
 from __future__ import annotations

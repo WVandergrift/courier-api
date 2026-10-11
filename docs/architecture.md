@@ -36,7 +36,11 @@ events for operational diagnosis.
 
 `app/relay.py` maintains authenticated outbound WebSocket connections from
 controllers or companion daemons behind NAT. It routes request/response frames
-by public key identifier and enforces a narrow path allowlist. End-to-end
+by public key identifier and enforces a narrow path allowlist. It also
+multiplexes app live streams (`/v1/relay/{keyId}/stream`) onto the daemon's
+socket as `stream.open`/`stream.data`/`stream.close` frames, routing opaque text
+frames without decrypting them; streams are tracked per agent socket, so a
+daemon that re-registers cannot reach its predecessor's streams. End-to-end
 application authentication remains the responsibility of the peers; Courier
 is a transport and must not be treated as an authorization authority for the
 forwarded operation.
