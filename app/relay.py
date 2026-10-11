@@ -81,6 +81,9 @@ class RelayHub:
     def __init__(self) -> None:
         self._agents: dict[str, WebSocket] = {}
         self._pending: dict[str, asyncio.Future] = {}
+        # Streams are keyed by the agent socket, not the key id, so a daemon that
+        # re-registers can never receive or address its predecessor's streams.
+        self._streams: dict[WebSocket, dict[str, _Stream]] = {}
 
     def agent_count(self) -> int:
         return len(self._agents)
@@ -126,6 +129,72 @@ class RelayHub:
             raise HTTPException(status_code=504, detail="daemon did not respond in time") from exc
         finally:
             self._pending.pop(request_id, None)
+
+
+    def open_stream(self, key_id: str, phone: WebSocket) -> _Stream | int:
+        """Allocate a stream on the daemon's current agent socket, or return the
+        close code that rejects it."""
+        agent = self._agents.get(key_id)
+        if agent is None:
+            return 4404
+        stream = _Stream(uuid4().hex, key_id, phone, agent)
+        self._streams.setdefault(agent, {})[stream.sid] = stream
+        return stream
+
+    def _stream_on(self, agent: WebSocket, sid: str) -> _Stream | None:
+        return self._streams.get(agent, {}).get(sid)
+
+    def stream_data_from_agent(self, agent: WebSocket, sid: str, data: str) -> None:
+        stream = self._stream_on(agent, sid)
+        if stream is None or stream.ended.done():
+            return
+        stream.outbox.put_nowait(("data", data))
+
+    def stream_close_from_agent(self, agent: WebSocket, sid: str, code: Any, reason: Any) -> None:
+        stream = self._stream_on(agent, sid)
+        if stream is None or stream.ended.done():
+            return
+        stream.outbox.put_nowait(("close", (_close_code(code), _close_reason(reason))))
+
+    def remove_stream(self, stream: _Stream) -> None:
+        streams = self._streams.get(stream.agent)
+        if streams is not None and streams.get(stream.sid) is stream:
+            del streams[stream.sid]
+            if not streams:
+                del self._streams[stream.agent]
+
+
+def _close_code(code: Any) -> int:
+    """A code we may send in a close frame; anything else becomes 1000."""
+    if isinstance(code, int) and not isinstance(code, bool) and (code == 1000 or 3000 <= code <= 4999):
+        return code
+    return 1000
+
+
+def _close_reason(reason: Any) -> str:
+    # A close frame's reason is limited to 123 UTF-8 bytes.
+    if not isinstance(reason, str):
+        return ""
+    return reason.encode("utf-8")[:123].decode("utf-8", errors="ignore")
+
+
+class _Stream:
+    """One phone WebSocket multiplexed onto a daemon's agent socket."""
+
+    def __init__(self, sid: str, key_id: str, phone: WebSocket, agent: WebSocket) -> None:
+        self.sid = sid
+        self.key_id = key_id
+        self.phone = phone
+        self.agent = agent
+        # Frames for the phone are queued so a slow phone never blocks the
+        # daemon's agent socket, which every stream and request shares.
+        self.outbox: asyncio.Queue = asyncio.Queue()
+        self.ended: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    def end(self, code: int, reason: str, *, notify_agent: bool, phone_gone: bool = False) -> None:
+        """Record why the stream ends. The first caller wins."""
+        if not self.ended.done():
+            self.ended.set_result((code, reason, notify_agent, phone_gone))
 
 
 hub = RelayHub()
@@ -193,6 +262,10 @@ async def relay_agent(ws: WebSocket) -> None:
             mtype = msg.get("type") if isinstance(msg, dict) else None
             if mtype == "response" and isinstance(msg.get("id"), str):
                 hub.resolve(msg["id"], msg)
+            elif mtype == "stream.data" and isinstance(msg.get("sid"), str) and isinstance(msg.get("data"), str):
+                hub.stream_data_from_agent(ws, msg["sid"], msg["data"])
+            elif mtype == "stream.close" and isinstance(msg.get("sid"), str):
+                hub.stream_close_from_agent(ws, msg["sid"], msg.get("code"), msg.get("reason"))
             elif mtype == "ping":
                 await ws.send_json({"type": "pong"})
             # ignore anything else
@@ -220,6 +293,61 @@ async def relay_forward(key_id: str, req: RelayRequest) -> RelayResponse:
         headers={str(k): str(v) for k, v in (frame.get("headers") or {}).items()},
         body=frame.get("body"),
     )
+
+
+async def _pump_phone_to_agent(stream: _Stream) -> None:
+    while True:
+        message = await stream.phone.receive()
+        if message["type"] == "websocket.disconnect":
+            stream.end(message.get("code") or 1005, message.get("reason") or "", notify_agent=True, phone_gone=True)
+            return
+        text = message.get("text")
+        await stream.agent.send_json({"type": "stream.data", "sid": stream.sid, "data": text})
+
+
+async def _pump_agent_to_phone(stream: _Stream) -> None:
+    while True:
+        kind, payload = await stream.outbox.get()
+        if kind == "close":
+            code, reason = payload
+            stream.end(code, reason, notify_agent=False)
+            return
+        await stream.phone.send_text(payload)
+
+
+@router.websocket("/v1/relay/{key_id}/stream")
+async def relay_stream(ws: WebSocket, key_id: str) -> None:
+    """A phone's live stream to its daemon. Courier only routes opaque text
+    frames; the end-to-end handshake and encryption happen phone <-> daemon."""
+    await ws.accept()
+    opened = hub.open_stream(key_id, ws)
+    if isinstance(opened, int):
+        await ws.close(code=opened)
+        return
+    stream = opened
+    await stream.agent.send_json({"type": "stream.open", "sid": stream.sid})
+    pumps = [asyncio.create_task(_pump_phone_to_agent(stream)), asyncio.create_task(_pump_agent_to_phone(stream))]
+    try:
+        await asyncio.wait([stream.ended])
+    finally:
+        for pump in pumps:
+            pump.cancel()
+        hub.remove_stream(stream)
+    await _finish_stream(stream)
+
+
+async def _finish_stream(stream: _Stream) -> None:
+    code, reason, notify_agent, phone_gone = stream.ended.result()
+    if notify_agent:
+        try:
+            await stream.agent.send_json({"type": "stream.close", "sid": stream.sid, "code": code, "reason": reason})
+        except Exception:  # noqa: BLE001 - the daemon socket may already be gone
+            pass
+    if not phone_gone:
+        try:
+            await stream.phone.close(code=code, reason=reason)
+        except Exception:  # noqa: BLE001 - the phone may already be gone
+            pass
 
 
 @router.get("/v1/relay/{key_id}/status")

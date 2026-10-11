@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
+import json
 import base64
 import time
 
+import anyio
 import pytest
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import HTTPException
@@ -198,3 +201,91 @@ def test_ws_agent_registers_and_pongs(monkeypatch, tmp_path):
             assert ws.receive_json() == {"type": "pong"}
     # socket closed → deregistered
     assert hub.is_online(key_id) is False
+
+
+# --- WS phone stream -------------------------------------------------------
+
+AGENT_AUTH = {"authorization": "Bearer test-token"}
+
+
+def recv(ws, timeout: float = 2.0) -> dict:
+    """Receive the next ASGI message the app sent on a TestClient socket, failing
+    instead of hanging when nothing arrives. Reads the session's private queue
+    because TestClient's public receive() has no timeout."""
+
+    async def _receive():
+        with anyio.fail_after(timeout):
+            return await ws._send_rx.receive()
+
+    return ws.portal.call(_receive)
+
+
+def recv_json(ws, timeout: float = 2.0):
+    message = recv(ws, timeout)
+    assert message["type"] == "websocket.send", message
+    return json.loads(message["text"])
+
+
+def test_stream_closes_4404_when_no_daemon_is_registered(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client:
+        with client.websocket_connect("/v1/relay/ghost/stream") as phone:
+            message = recv(phone)
+    assert message["type"] == "websocket.close"
+    assert message["code"] == 4404
+
+
+@contextlib.contextmanager
+def registered_agent(client):
+    """A real daemon agent socket, registered and ready. Yields (ws, key_id)."""
+    key_id, register_frame = make_agent()
+    with client.websocket_connect("/v1/relay/agent", headers=AGENT_AUTH) as ws:
+        ws.send_json(register_frame())
+        assert recv_json(ws) == {"type": "registered"}
+        yield ws, key_id
+
+
+def open_stream(client, agent, key_id, stack):
+    """Open a phone stream and return (phone_ws, sid) from the daemon's stream.open."""
+    phone = stack.enter_context(client.websocket_connect(f"/v1/relay/{key_id}/stream"))
+    opened = recv_json(agent)
+    assert opened["type"] == "stream.open"
+    return phone, opened["sid"]
+
+
+def test_stream_announces_open_and_forwards_phone_text_to_the_daemon(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+        assert isinstance(sid, str) and sid
+
+        phone.send_text('{"t":"hello","v":1}')
+        assert recv_json(agent) == {"type": "stream.data", "sid": sid, "data": '{"t":"hello","v":1}'}
+
+
+def test_stream_delivers_daemon_data_to_the_phone_as_text(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        agent.send_json({"type": "stream.data", "sid": sid, "data": '{"t":"welcome","v":1}'})
+        assert recv(phone) == {"type": "websocket.send", "text": '{"t":"welcome","v":1}'}
+
+
+def test_daemon_stream_close_closes_the_phone_with_its_code_after_queued_data(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        agent.send_json({"type": "stream.data", "sid": sid, "data": "last"})
+        agent.send_json({"type": "stream.close", "sid": sid, "code": 4401, "reason": "handshake rejected"})
+        assert recv(phone) == {"type": "websocket.send", "text": "last"}
+        closed = recv(phone)
+        assert closed["type"] == "websocket.close"
+        assert (closed["code"], closed["reason"]) == (4401, "handshake rejected")
+
+
+def test_phone_disconnect_sends_stream_close_to_the_daemon(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        phone.close(code=4400, reason="bad tag")
+        assert recv_json(agent) == {"type": "stream.close", "sid": sid, "code": 4400, "reason": "bad tag"}
+        agent.send_json({"type": "ping"})
+        assert recv_json(agent) == {"type": "pong"}
