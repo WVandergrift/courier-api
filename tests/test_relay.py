@@ -289,3 +289,134 @@ def test_phone_disconnect_sends_stream_close_to_the_daemon(monkeypatch, tmp_path
         assert recv_json(agent) == {"type": "stream.close", "sid": sid, "code": 4400, "reason": "bad tag"}
         agent.send_json({"type": "ping"})
         assert recv_json(agent) == {"type": "pong"}
+
+
+def test_phone_text_frame_over_64_kib_closes_the_stream_with_1009(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        at_limit = "a" * 65536
+        phone.send_text(at_limit)
+        assert recv_json(agent) == {"type": "stream.data", "sid": sid, "data": at_limit}
+
+        phone.send_text("é" * 32768 + "a")  # 65537 UTF-8 bytes, 32769 characters
+        closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 1009)
+        assert recv_json(agent) == {"type": "stream.close", "sid": sid, "code": 1009, "reason": "frame too large"}
+
+
+def test_phone_binary_frame_closes_the_stream_with_1003(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        phone.send_bytes(b"\x00\x01")
+        closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 1003)
+        assert recv_json(agent) == {"type": "stream.close", "sid": sid, "code": 1003, "reason": "binary frames are not supported"}
+
+
+def test_daemon_data_over_64_kib_closes_the_stream_with_1009(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        agent.send_json({"type": "stream.data", "sid": sid, "data": "a" * 65537})
+        closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 1009)
+        assert recv_json(agent) == {"type": "stream.close", "sid": sid, "code": 1009, "reason": "frame too large"}
+
+
+def test_stream_closes_with_1013_when_the_phone_stops_reading(monkeypatch):
+    monkeypatch.setattr(relay, "STREAM_OUTBOX_MAX", 3)
+
+    async def go():
+        h = RelayHub()
+        agent = FakeAgent(h)
+        h.register("k", agent)
+        stream = h.open_stream("k", object())  # nothing drains the phone queue
+        for _ in range(3):
+            h.stream_data_from_agent(agent, stream.sid, "frame")
+        assert not stream.ended.done()
+        h.stream_data_from_agent(agent, stream.sid, "frame")
+        return stream.ended.result()[:2]
+
+    assert asyncio.run(go()) == (1013, "phone is not reading")
+
+
+def test_ninth_stream_for_a_daemon_closes_with_4429(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        streams = [open_stream(client, agent, key_id, stack) for _ in range(8)]
+        assert len({sid for _, sid in streams}) == 8
+
+        with client.websocket_connect(f"/v1/relay/{key_id}/stream") as ninth:
+            closed = recv(ninth)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 4429)
+
+        first_phone, first_sid = streams[0]
+        first_phone.close(code=1000)
+        assert recv_json(agent)["sid"] == first_sid  # stream.close for the freed slot
+        replacement, _ = open_stream(client, agent, key_id, stack)
+
+
+def recv_through(ws, predicate, timeout: float = 2.0) -> list[dict]:
+    """Collect messages up to and including the first that matches."""
+    messages = []
+    while not messages or not predicate(messages[-1]):
+        messages.append(recv(ws, timeout))
+    return messages
+
+
+def test_stream_idle_for_the_window_closes_with_4408_but_traffic_either_way_keeps_it_open(monkeypatch, tmp_path):
+    monkeypatch.setattr(relay, "STREAM_IDLE_S", 0.4)
+    with _client(monkeypatch, tmp_path) as client, registered_agent(client) as (agent, key_id), contextlib.ExitStack() as stack:
+        phone, sid = open_stream(client, agent, key_id, stack)
+
+        for _ in range(8):  # 0.8 s of phone-only traffic
+            time.sleep(0.1)
+            phone.send_text("from-phone")
+        for _ in range(8):  # 0.8 s of daemon-only traffic
+            time.sleep(0.1)
+            agent.send_json({"type": "stream.data", "sid": sid, "data": "from-daemon"})
+
+        to_phone = recv_through(phone, lambda m: m["type"] == "websocket.close")
+        assert to_phone[:-1] == [{"type": "websocket.send", "text": "from-daemon"}] * 8
+        assert to_phone[-1]["code"] == 4408
+
+        to_agent = [json.loads(m["text"]) for m in recv_through(agent, lambda m: '"stream.close"' in m["text"])]
+        assert to_agent[:-1] == [{"type": "stream.data", "sid": sid, "data": "from-phone"}] * 8
+        assert to_agent[-1] == {"type": "stream.close", "sid": sid, "code": 4408, "reason": "idle timeout"}
+
+
+def test_daemon_disconnect_closes_its_streams_with_4404(monkeypatch, tmp_path):
+    with _client(monkeypatch, tmp_path) as client, contextlib.ExitStack() as stack:
+        with registered_agent(client) as (agent, key_id):
+            phone, _sid = open_stream(client, agent, key_id, stack)
+            agent.close(code=1006)
+            closed = recv(phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 4404)
+
+
+def test_daemon_reregistering_closes_old_streams_with_1001_without_cross_wiring(monkeypatch, tmp_path):
+    key_id, register_frame = make_agent()
+    with _client(monkeypatch, tmp_path) as client, contextlib.ExitStack() as stack:
+        old_agent = stack.enter_context(client.websocket_connect("/v1/relay/agent", headers=AGENT_AUTH))
+        old_agent.send_json(register_frame())
+        assert recv_json(old_agent) == {"type": "registered"}
+        old_phone, old_sid = open_stream(client, old_agent, key_id, stack)
+
+        new_agent = stack.enter_context(client.websocket_connect("/v1/relay/agent", headers=AGENT_AUTH))
+        new_agent.send_json(register_frame())
+        assert recv_json(new_agent) == {"type": "registered"}
+
+        closed = recv(old_phone)
+        assert (closed["type"], closed["code"]) == ("websocket.close", 1001)
+        assert recv(old_agent)["code"] == 4409
+
+        new_phone, new_sid = open_stream(client, new_agent, key_id, stack)
+        assert new_sid != old_sid
+        # The new socket cannot address the old stream; the old socket cannot address the new one.
+        new_agent.send_json({"type": "stream.data", "sid": old_sid, "data": "stray"})
+        old_agent.send_json({"type": "stream.data", "sid": new_sid, "data": "stray"})
+        new_agent.send_json({"type": "stream.data", "sid": new_sid, "data": "mine"})
+        assert recv(new_phone) == {"type": "websocket.send", "text": "mine"}
+        with pytest.raises(TimeoutError):
+            recv(old_phone, timeout=0.2)

@@ -47,6 +47,11 @@ FORWARD_TIMEOUT_S = 20.0
 # the unpair route. Keeps the tunnel from being used to probe other surfaces.
 ALLOWED_PREFIXES = ("/v1/companion/", "/client")
 
+STREAM_MAX_FRAME_BYTES = 64 * 1024
+STREAM_OUTBOX_MAX = 32
+STREAM_MAX_PER_DAEMON = 8
+STREAM_IDLE_S = 5 * 60.0
+
 
 def _b64u_decode(value: str) -> bytes:
     pad = "=" * (-len(value) % 4)
@@ -137,8 +142,11 @@ class RelayHub:
         agent = self._agents.get(key_id)
         if agent is None:
             return 4404
+        streams = self._streams.setdefault(agent, {})
+        if len(streams) >= STREAM_MAX_PER_DAEMON:
+            return 4429
         stream = _Stream(uuid4().hex, key_id, phone, agent)
-        self._streams.setdefault(agent, {})[stream.sid] = stream
+        streams[stream.sid] = stream
         return stream
 
     def _stream_on(self, agent: WebSocket, sid: str) -> _Stream | None:
@@ -148,6 +156,13 @@ class RelayHub:
         stream = self._stream_on(agent, sid)
         if stream is None or stream.ended.done():
             return
+        if len(data.encode("utf-8")) > STREAM_MAX_FRAME_BYTES:
+            stream.end(1009, "frame too large", notify_agent=True)
+            return
+        if stream.outbox.qsize() >= STREAM_OUTBOX_MAX:
+            stream.end(1013, "phone is not reading", notify_agent=True)
+            return
+        stream.touch()
         stream.outbox.put_nowait(("data", data))
 
     def stream_close_from_agent(self, agent: WebSocket, sid: str, code: Any, reason: Any) -> None:
@@ -155,6 +170,12 @@ class RelayHub:
         if stream is None or stream.ended.done():
             return
         stream.outbox.put_nowait(("close", (_close_code(code), _close_reason(reason))))
+
+    def end_streams_for(self, agent: WebSocket, code: int, reason: str) -> None:
+        """End every stream on an agent socket that is going away. The daemon
+        is not told: its socket is gone or has been replaced."""
+        for stream in self._streams.pop(agent, {}).values():
+            stream.end(code, reason, notify_agent=False)
 
     def remove_stream(self, stream: _Stream) -> None:
         streams = self._streams.get(stream.agent)
@@ -189,7 +210,11 @@ class _Stream:
         # Frames for the phone are queued so a slow phone never blocks the
         # daemon's agent socket, which every stream and request shares.
         self.outbox: asyncio.Queue = asyncio.Queue()
+        self.last_activity = time.monotonic()
         self.ended: asyncio.Future = asyncio.get_running_loop().create_future()
+
+    def touch(self) -> None:
+        self.last_activity = time.monotonic()
 
     def end(self, code: int, reason: str, *, notify_agent: bool, phone_gone: bool = False) -> None:
         """Record why the stream ends. The first caller wins."""
@@ -249,6 +274,7 @@ async def relay_agent(ws: WebSocket) -> None:
 
     displaced = hub.register(key_id, ws)
     if displaced is not None:
+        hub.end_streams_for(displaced, 1001, "daemon reconnected")
         try:
             await displaced.close(code=4409)  # replaced by a newer tunnel
         except Exception:  # noqa: BLE001
@@ -275,6 +301,7 @@ async def relay_agent(ws: WebSocket) -> None:
         logger.exception("relay_agent_error", extra={"key_id": key_id[:8]})
     finally:
         hub.unregister(key_id, ws)
+        hub.end_streams_for(ws, 4404, "daemon disconnected")
         logger.info("relay_agent_disconnected", extra={"key_id": key_id[:8], "agents": hub.agent_count()})
 
 
@@ -302,6 +329,13 @@ async def _pump_phone_to_agent(stream: _Stream) -> None:
             stream.end(message.get("code") or 1005, message.get("reason") or "", notify_agent=True, phone_gone=True)
             return
         text = message.get("text")
+        if text is None:
+            stream.end(1003, "binary frames are not supported", notify_agent=True)
+            return
+        if len(text.encode("utf-8")) > STREAM_MAX_FRAME_BYTES:
+            stream.end(1009, "frame too large", notify_agent=True)
+            return
+        stream.touch()
         await stream.agent.send_json({"type": "stream.data", "sid": stream.sid, "data": text})
 
 
@@ -328,7 +362,12 @@ async def relay_stream(ws: WebSocket, key_id: str) -> None:
     await stream.agent.send_json({"type": "stream.open", "sid": stream.sid})
     pumps = [asyncio.create_task(_pump_phone_to_agent(stream)), asyncio.create_task(_pump_agent_to_phone(stream))]
     try:
-        await asyncio.wait([stream.ended])
+        while not stream.ended.done():
+            remaining = stream.last_activity + STREAM_IDLE_S - time.monotonic()
+            if remaining <= 0:
+                stream.end(4408, "idle timeout", notify_agent=True)
+                break
+            await asyncio.wait([stream.ended], timeout=remaining)
     finally:
         for pump in pumps:
             pump.cancel()
