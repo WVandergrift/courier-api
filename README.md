@@ -48,6 +48,13 @@ Useful local URLs:
 | Companion relay | `/v1/relay/*` | Route authenticated off-LAN request/response frames and live streams |
 | Home Key links | `/ember/t/{tagId}` | Open Ember without exposing the URI fragment secret |
 | Platform association | `/.well-known/*` | Associate `emberhome.lighting` with the Ember apps |
+| Pulse Meta launch probe | `/pulse-meta` | Static fallback for the private iPhone sample's Universal Link |
+
+The Apple association response also permits only `/pulse-meta` for
+`3YWE9TBUAM.com.apa.pulse-meta-sample`, preserving Ember's existing paths.
+The callback fallback is served directly by nginx with access logging disabled,
+no query reflection, no external resources and no caching. It does not register
+an account, publish the beta app or proxy callback values into the API.
 
 Every protected administrative endpoint accepts
 `Authorization: Bearer $COURIER_API_TOKEN`. The dashboard also accepts HTTP

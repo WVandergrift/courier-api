@@ -61,3 +61,18 @@ def test_both_relay_websockets_are_proxied_with_upgrade_headers():
         assert "proxy_set_header Connection $connection_upgrade;" in location, path
         read_timeout = re.search(r"proxy_read_timeout\s+(\d+)s;", location)
         assert read_timeout and int(read_timeout.group(1)) > 5 * 60, path
+
+
+def test_pulse_callback_does_not_log_or_proxy_registration_parameters():
+    location = _location_for(_api_server(), "/pulse-meta")
+    assert "alias /opt/courier/deploy/public/pulse-meta.html;" in location
+    assert "access_log off;" in location
+    assert "proxy_pass" not in location
+    assert 'Referrer-Policy "no-referrer"' in location
+    assert 'Cache-Control "no-store"' in location
+    assert "limit_except GET HEAD { deny all; }" in location
+    page = (NGINX_CONF.parent / "public/pulse-meta.html").read_text()
+    assert "Pulse launch test" in page
+    assert "<script" not in page and "<form" not in page
+    # The exact callback path must not intercept other API routes.
+    assert "proxy_pass" in _location_for(_api_server(), "/pulse-meta-other")

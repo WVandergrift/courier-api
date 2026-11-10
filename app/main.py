@@ -265,6 +265,10 @@ async def ember_apple_app_site_association() -> JSONResponse:
                     {
                         "appID": EMBER_IOS_APP_ID,
                         "paths": ["/ember/t/*"],
+                    },
+                    {
+                        "appID": "3YWE9TBUAM.com.apa.pulse-meta-sample",
+                        "paths": ["/pulse-meta"],
                     }
                 ],
             }

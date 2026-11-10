@@ -65,6 +65,10 @@ def test_ember_home_key_association_files_and_landing_page(tmp_path, monkeypatch
         "appID": "3YWE9TBUAM.app.embercore",
         "paths": ["/ember/t/*"],
     }
+    assert apple.json()["applinks"]["details"][1:] == [{
+        "appID": "3YWE9TBUAM.com.apa.pulse-meta-sample",
+        "paths": ["/pulse-meta"],
+    }]
     target = android.json()[0]["target"]
     assert target["package_name"] == "app.embercore"
     assert "AA:BB:CC" in target["sha256_cert_fingerprints"]
