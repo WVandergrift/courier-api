@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 
+import httpx
+import pytest
 from fastapi.testclient import TestClient
 
-from app.apns import ApnsResult
+from app.apns import ApnsClient, ApnsResult
 from app.main import app
 
 
@@ -113,6 +116,60 @@ def test_sends_push_and_records_event(tmp_path, monkeypatch):
     # remote content.data ONLY from userInfo["body"], never top-level keys.
     assert fake.requests[0].payload["body"] == {"kind": "test"}
     assert "kind" not in fake.requests[0].payload
+
+
+@pytest.mark.parametrize(
+    "options, expected_aps, expected_push_type, expected_priority",
+    [
+        ({}, {"sound": "default"}, "alert", "10"),
+        ({"contentAvailable": False}, {"sound": "default"}, "alert", "10"),
+        ({"contentAvailable": True, "sound": None}, {"content-available": 1}, "alert", "10"),
+        ({"pushType": "background"}, {"content-available": 1}, "background", "5"),
+        ({"pushType": "background", "contentAvailable": False}, {"content-available": 1}, "background", "5"),
+    ],
+    ids=["default-alert", "explicit-false", "silent-alert-background-delivery", "background", "background-explicit-false"],
+)
+def test_push_content_available_preserves_payload_and_apns_headers(
+    tmp_path, monkeypatch, options, expected_aps, expected_push_type, expected_priority
+):
+    monkeypatch.setenv("COURIER_API_TOKEN", "test-token")
+    monkeypatch.setenv("COURIER_DB_PATH", str(tmp_path / "courier.db"))
+    requests = []
+
+    def receive_apns(request):
+        requests.append(request)
+        return httpx.Response(200, headers={"apns-id": "apns-content-available"})
+
+    apns = ApnsClient(
+        team_id="TEAM",
+        key_id="KEY",
+        private_key="PRIVATE",
+        client=httpx.AsyncClient(transport=httpx.MockTransport(receive_apns)),
+    )
+    monkeypatch.setattr(ApnsClient, "from_env", classmethod(lambda cls: apns))
+    monkeypatch.setattr(apns, "_authorization_token", lambda: "test-provider-token")
+    payload = {
+        "deviceToken": "abcdef1234567890abcdef1234567890",
+        "apnsTopic": "com.apa.pulse-meta-sample",
+        "data": {"kind": "glasses.card", "title": "Build complete"},
+        **options,
+    }
+    if expected_push_type == "alert":
+        payload.update(title="Pulse", body="Build complete")
+        expected_aps = {**expected_aps, "alert": {"title": "Pulse", "body": "Build complete"}}
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/v1/push/ios", headers={"Authorization": "Bearer test-token"}, json=payload
+        )
+
+    assert response.status_code == 200
+    assert len(requests) == 1
+    outbound = requests[0]
+    assert json.loads(outbound.content) == {"aps": expected_aps, "body": payload["data"]}
+    assert outbound.headers["apns-push-type"] == expected_push_type
+    assert outbound.headers["apns-priority"] == expected_priority
+    assert outbound.headers["apns-topic"] == "com.apa.pulse-meta-sample"
 
 
 def test_category_and_thread_id_land_in_aps(tmp_path, monkeypatch):

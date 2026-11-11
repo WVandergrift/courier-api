@@ -38,6 +38,7 @@ class PushRequest(BaseModel):
         alias="pushType",
     )
     sound: str | None = "default"
+    content_available: bool = Field(default=False, alias="contentAvailable")
     badge: int | None = Field(default=None, ge=0)
     category: str | None = Field(default=None, max_length=64)
     thread_id: str | None = Field(default=None, alias="threadId", max_length=64)
@@ -83,7 +84,7 @@ class PushRequest(BaseModel):
             aps["badge"] = self.badge
         if self.sound and self.push_type != "background":
             aps["sound"] = self.sound
-        if self.push_type == "background":
+        if self.push_type == "background" or self.content_available:
             aps["content-available"] = 1
         # category names a UNNotificationCategory the app pre-registers; it is
         # what makes iOS render interactive action buttons on the notification.

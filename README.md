@@ -60,6 +60,13 @@ Every protected administrative endpoint accepts
 `Authorization: Bearer $COURIER_API_TOKEN`. The dashboard also accepts HTTP
 Basic authentication with any username and the token as its password.
 
+`POST /v1/push/ios` accepts optional `contentAvailable: true` to add
+`aps["content-available"]: 1` while retaining the selected `pushType` (default
+`alert`). This requests background app delivery alongside an alert; it does not
+guarantee that iOS will run the app. The default is `false`, and `background`
+pushes always include the flag. Pass `sound: null` to omit the APNs sound.
+Custom `data` remains nested under the payload's top-level `body` key.
+
 ### Companion relay
 
 | Path | Caller | Purpose |
